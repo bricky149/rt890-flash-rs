@@ -39,11 +39,11 @@ List available ports, e.g. /dev/ttyUSB0
 Port to read from, or write to.
 
 -d FILE
-Read flash to file, e.g. backup.bin
+Read external SPI flash to file, e.g. backup.bin
 Radio MUST be in normal mode.
 
 -f FILE
-Write file to flash, e.g. firmware.bin
+Write firmware file to MCU flash, e.g. firmware.bin
 Radio MUST be in bootloader mode.
 ";
 
@@ -55,7 +55,7 @@ fn dump_flash(port: &String, filename: &String) {
 
     let mut i = 0;
 
-    while i < 65535 {
+    while i < 32768 {
         match uart::command_readflash(port, i) {
             Ok(Some(data)) => {
                 print!("\rDumping from {:#04x}", i);
@@ -64,7 +64,7 @@ fn dump_flash(port: &String, filename: &String) {
             Ok(None) => break,
             Err(e) => panic!("{}. Is the radio in normal mode?", e)
         }
-        i += 128
+        i += 1
     }
 }
 
