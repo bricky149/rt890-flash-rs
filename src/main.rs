@@ -39,11 +39,11 @@ List available ports, e.g. /dev/ttyUSB0
 Port to read from, or write to.
 
 -d FILE
-Read flash to file, e.g. backup.bin
+Read external SPI flash to file, e.g. backup.bin
 Radio MUST be in normal mode.
 
 -f FILE
-Write file to flash, e.g. firmware.bin
+Write firmware file to MCU flash, e.g. firmware.bin
 Radio MUST be in bootloader mode.
 ";
 
