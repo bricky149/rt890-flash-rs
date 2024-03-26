@@ -47,31 +47,28 @@ Write firmware file to MCU flash, e.g. firmware.bin
 Radio MUST be in bootloader mode.
 ";
 
-fn dump_flash(port: &String, filename: &String) {
+fn dump_spi_flash(port: &String, filename: &String) {
     let mut fw = match File::create(filename) {
         Ok(f) => f,
         Err(e) => panic!("{}", e)
     };
 
-    let mut i = 0;
-
-    while i < 32768 {
+    for i in 0..32768 {
         match uart::command_readflash(port, i) {
             Ok(Some(data)) => {
-                print!("\rDumping from {:#04x}", i);
-                fw.write_all(&data).expect("Failed to dump flash")
+                print!("\rDumping SPI flash from address {:#06x}", i);
+                fw.write_all(&data).expect("Failed to dump SPI flash")
             }
             Ok(None) => break,
             Err(e) => panic!("{}. Is the radio in normal mode?", e)
         }
-        i += 1
     }
 }
 
 fn flash_firmware(port: &String, filename: &String) {
     match uart::command_eraseflash(port) {
-        Ok(true) => println!("Flash erased"),
-        _ => panic!("Failed to erase flash. Is the radio in bootloader mode?")
+        Ok(true) => println!("MCU flash erased"),
+        _ => panic!("Failed to erase MCU flash. Is the radio in bootloader mode?")
     }
 
     let fw = match fs::read(filename) {
@@ -81,11 +78,11 @@ fn flash_firmware(port: &String, filename: &String) {
 
     let fw_size = fw.len();
     let mut i = 0;
-    
+
     while i < fw_size {
         match uart::command_writeflash(port, i, &fw) {
-            Ok(true) => print!("\rFlashing to {:#04x}", i),
-            _ => panic!("Failed to flash firmware")
+            Ok(true) => print!("\rFlashing firmware to address {:#06x}", i),
+            _ => panic!("Failed to write firmware to MCU flash")
         }
         i += 128
     }
@@ -118,12 +115,12 @@ fn main() {
 
             match args[3].as_str() {
                 "-d" => {
-                    dump_flash(&args[2], &args[4]);
-                    println!("\nDump complete")
+                    dump_spi_flash(&args[2], &args[4]);
+                    println!("\nSPI flash dump complete")
                 }
                 "-f" => {
                     flash_firmware(&args[2], &args[4]);
-                    println!("\nFlash complete")
+                    println!("\nFirmware flash complete")
                 }
                 _ => {
                     println!("{}", USAGE);
