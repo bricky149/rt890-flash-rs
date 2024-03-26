@@ -55,7 +55,7 @@ fn dump_flash(port: &String, filename: &String) {
 
     let mut i = 0;
 
-    while i < 65535 {
+    while i < 32768 {
         match uart::command_readflash(port, i) {
             Ok(Some(data)) => {
                 print!("\rDumping from {:#04x}", i);
@@ -64,7 +64,7 @@ fn dump_flash(port: &String, filename: &String) {
             Ok(None) => break,
             Err(e) => panic!("{}. Is the radio in normal mode?", e)
         }
-        i += 128
+        i += 1
     }
 }
 
