@@ -15,14 +15,18 @@
     limitations under the License.
 */
 
-mod uart;
-
 extern crate nix;
 use nix::unistd::Uid;
+
+extern crate serialport5;
+use self::serialport5::*;
 
 use std::env::args;
 use std::fs::{self, File};
 use std::io::Write;
+use std::time::Duration;
+
+mod uart;
 
 const USAGE: &str = "
 rt890-flash
@@ -39,24 +43,34 @@ List available ports, e.g. /dev/ttyUSB0
 Port to read from, or write to.
 
 -d FILE
-Read external SPI flash to file, e.g. backup.bin
+Read external SPI flash to file, e.g. spi_backup.bin
 Radio MUST be in normal mode.
 
 -f FILE
 Write firmware file to MCU flash, e.g. firmware.bin
-Radio MUST be in bootloader mode.
+Radio MUST be in bootloader mode and will automatically restart.
 ";
 
+const BAUD_RATE: u32 = 115_200;
+const CHUNK_LENGTH: usize = 128;
+const FIRMWARE_SIZE: usize = 60_416;
+
 fn dump_spi_flash(port: &String, filename: &String) {
+    let port = SerialPort::builder()
+        .baud_rate(BAUD_RATE)
+        .read_timeout(Some(Duration::from_secs(2)))
+        .open(port)
+        .expect("Failed to open port");
+
     let mut fw = match File::create(filename) {
         Ok(f) => f,
         Err(e) => panic!("{}", e)
     };
 
-    for i in 0..32768 {
-        match uart::command_readflash(port, i) {
+    for offset in 0..32768 {
+        match uart::command_readspiflash(&port, offset) {
             Ok(Some(data)) => {
-                print!("\rDumping SPI flash from address {:#06x}", i);
+                print!("\rDumping SPI flash from address {:#08x}", offset);
                 fw.write_all(&data).expect("Failed to dump SPI flash")
             }
             Ok(None) => break,
@@ -65,27 +79,39 @@ fn dump_spi_flash(port: &String, filename: &String) {
     }
 }
 
-fn flash_firmware(port: &String, filename: &String) {
-    match uart::command_eraseflash(port) {
+fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
+    let port = SerialPort::builder()
+        .baud_rate(BAUD_RATE)
+        .read_timeout(Some(Duration::from_secs(2)))
+        .open(port)
+        .expect("Failed to open port");
+
+    let fw = match fs::read(filename) {
+        Ok(f) => {
+            if f.len() != FIRMWARE_SIZE {
+                return Ok(false)
+            };
+            f
+        },
+        Err(e) => panic!("{}", e)
+    };
+
+    match uart::command_eraseflash(&port) {
         Ok(true) => println!("MCU flash erased"),
         _ => panic!("Failed to erase MCU flash. Is the radio in bootloader mode?")
     }
 
-    let fw = match fs::read(filename) {
-        Ok(f) => f,
-        Err(e) => panic!("{}", e)
-    };
+    let mut offset = 0;
 
-    let fw_size = fw.len();
-    let mut i = 0;
-
-    while i < fw_size {
-        match uart::command_writeflash(port, i, &fw) {
-            Ok(true) => print!("\rFlashing firmware to address {:#06x}", i),
+    while offset < FIRMWARE_SIZE {
+        match uart::command_writeflash(&port, offset, &fw) {
+            Ok(true) => print!("\rFlashing firmware to address {:#06x}", offset),
             _ => panic!("Failed to write firmware to MCU flash")
         }
-        i += 128
+        offset += CHUNK_LENGTH
     }
+
+    Ok(true)
 }
 
 fn main() {
@@ -119,8 +145,10 @@ fn main() {
                     println!("\nSPI flash dump complete")
                 }
                 "-f" => {
-                    flash_firmware(&args[2], &args[4]);
-                    println!("\nFirmware flash complete")
+                    match flash_firmware(&args[2], &args[4]) {
+                        Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
+                        _ => println!("Specified file is not exactly {} bytes", FIRMWARE_SIZE)
+                    }
                 }
                 _ => {
                     println!("{}", USAGE);
