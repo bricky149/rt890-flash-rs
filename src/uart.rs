@@ -19,9 +19,9 @@ extern crate serialport5;
 use self::serialport5::*;
 
 use std::io::{Read, Write};
-use std::time::Duration;
+use crate::spi::SpiRange;
 
-const BAUD_RATE: u32 = 115200;
+const CHUNK_LENGTH: usize = 128;
 
 fn checksum(command: &mut [u8]) {
     let last_idx = command.len() - 1;
@@ -30,7 +30,7 @@ fn checksum(command: &mut [u8]) {
     for byte in command.iter().take(last_idx) {
         sum += byte
     }
-    command[last_idx] = sum;
+    command[last_idx] = sum
 }
 
 fn verify(command: &[u8]) -> bool {
@@ -43,81 +43,82 @@ fn verify(command: &[u8]) -> bool {
     command[last_idx] == calculated_sum
 }
 
-pub fn command_eraseflash(port: &String) -> Result<bool> {
+pub fn command_eraseflash(mut port: &SerialPort) -> Result<bool> {
     let mut command = [0u8; 5];
     command[0] = 0x39;
     command[3] = 0x55;
-    checksum(&mut command);
 
-    let mut port = SerialPort::builder()
-        .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(1)))
-        .open(port)
-        .expect("Failed to open port");
+    checksum(&mut command);
     port.write_all(&command)?;
 
-    let mut buffer = [0u8];
-    port.read_exact(&mut buffer)?;
-    match buffer {
+    let mut response = [0u8];
+    port.read_exact(&mut response)?;
+    match response {
         [0x06] => Ok(true),
         _ => Ok(false)
     }
 }
 
-pub fn command_writeflash(port: &String, offset: usize, firmware: &[u8]) -> Result<bool> {
+pub fn command_writeflash(mut port: &SerialPort, offset: usize, fw: &[u8]) -> Result<bool> {
     let mut command = [0u8; 132];
     command[0] = 0x57;
     command[1] = ((offset >> 8) & 0xFF) as u8;
     command[2] = ((offset) & 0xFF) as u8;
-    let mut chunk_length = firmware.len() - offset;
-    if chunk_length > 128 {
-        chunk_length = 128
-    }
-    command[3..3+chunk_length].copy_from_slice(&firmware[offset..offset+chunk_length]);
-    checksum(&mut command);
+    command[3..131].copy_from_slice(&fw[offset..offset+CHUNK_LENGTH]);
 
-    let mut port = SerialPort::builder()
-        .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(1)))
-        .open(port)
-        .expect("Failed to open port");
+    checksum(&mut command);
     port.write_all(&command)?;
 
-    let mut buffer = [0u8];
-    port.read_exact(&mut buffer)?;
-    match buffer {
+    let mut response = [0u8];
+    port.read_exact(&mut response)?;
+    match response {
         [0x06] => Ok(true),
         _ => Ok(false)
     }
 }
 
-pub fn command_readflash(port: &String, offset: u16) -> Result<Option<Vec<u8>>> {
+pub fn command_readspiflash(mut port: &SerialPort, offset: u16) -> Result<Option<Vec<u8>>> {
     let mut command = [0u8; 4];
     command[0] = 0x52;
     command[1] = ((offset >> 8) & 0xFF) as u8;
     command[2] = ((offset) & 0xFF) as u8;
-    checksum(&mut command);
 
-    let mut port = SerialPort::builder()
-        .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(1)))
-        .open(port)
-        .expect("Failed to open port");
+    checksum(&mut command);
     port.write_all(&command)?;
 
     let mut block = [0u8; 132];
     port.read_exact(&mut block)?;
-
-    if block[1] == 0xFF {
-        // No more data
-        return Ok(None)
+    if !verify(&block) {
+        // Sometimes returns no data on first run
+        port.read_exact(&mut block)?;
     }
 
     if verify(&block) {
         let data = block[3..131].to_vec();
         return Ok(Some(data))
     }
+
     Ok(None)
+}
+
+pub fn command_writespiflash(mut port: &SerialPort, spi_range: &SpiRange, offset: usize, spi: &[u8]) -> Result<bool> {
+    let block_offset = (offset - spi_range.offset) / 128;
+
+    let mut command = [0u8; 132];
+    command[0] = spi_range.cmd;
+    command[1] = ((block_offset >> 8) & 0xFF) as u8;
+    command[2] = ((block_offset) & 0xFF) as u8;
+    command[3..131].copy_from_slice(&spi[offset..offset+CHUNK_LENGTH]);
+
+    checksum(&mut command);
+    port.write_all(&command)?;
+
+    let mut response = [0u8];
+    port.read_exact(&mut response)?;
+    match response {
+        [0x06] => Ok(true),
+        _ => Ok(false)
+    }
 }
 
 pub fn get_available_ports() -> Vec<SerialPortInfo> {
