@@ -19,6 +19,7 @@ extern crate serialport5;
 use self::serialport5::*;
 
 use std::io::{Read, Write};
+use crate::spi::SpiRange;
 
 const CHUNK_LENGTH: usize = 128;
 
@@ -29,7 +30,7 @@ fn checksum(command: &mut [u8]) {
     for byte in command.iter().take(last_idx) {
         sum += byte
     }
-    command[last_idx] = sum;
+    command[last_idx] = sum
 }
 
 fn verify(command: &[u8]) -> bool {
@@ -98,6 +99,26 @@ pub fn command_readspiflash(mut port: &SerialPort, offset: u16) -> Result<Option
     }
 
     Ok(None)
+}
+
+pub fn command_writespiflash(mut port: &SerialPort, spi_range: &SpiRange, offset: usize, spi: &[u8]) -> Result<bool> {
+    let block_offset = (offset - spi_range.offset) / 128;
+
+    let mut command = [0u8; 132];
+    command[0] = spi_range.cmd;
+    command[1] = ((block_offset >> 8) & 0xFF) as u8;
+    command[2] = ((block_offset) & 0xFF) as u8;
+    command[3..131].copy_from_slice(&spi[offset..offset+CHUNK_LENGTH]);
+
+    checksum(&mut command);
+    port.write_all(&command)?;
+
+    let mut response = [0u8];
+    port.read_exact(&mut response)?;
+    match response {
+        [0x06] => Ok(true),
+        _ => Ok(false)
+    }
 }
 
 pub fn get_available_ports() -> Vec<SerialPortInfo> {

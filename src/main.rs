@@ -26,6 +26,9 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::time::Duration;
 
+mod spi;
+use spi::SpiRange;
+
 mod uart;
 
 const USAGE: &str = "
@@ -49,11 +52,16 @@ Radio MUST be in normal mode.
 -f FILE
 Write firmware file to MCU flash, e.g. firmware.bin
 Radio MUST be in bootloader mode and will automatically restart.
+
+-r FILE
+Write flash dump to external SPI flash, e.g. spi_backup.bin
+Radio MUST be in normal mode and be manually restarted.
 ";
 
 const BAUD_RATE: u32 = 115_200;
 const CHUNK_LENGTH: usize = 128;
 const FIRMWARE_SIZE: usize = 60_416;
+const SPI_FLASH_SIZE: usize = 4_194_304;
 
 fn dump_spi_flash(port: &String, filename: &String) {
     let port = SerialPort::builder()
@@ -77,6 +85,51 @@ fn dump_spi_flash(port: &String, filename: &String) {
             Err(e) => panic!("{}. Is the radio in normal mode?", e)
         }
     }
+}
+
+fn restore_spi_flash(port: &String, filename: &String) -> Result<bool> {
+    let port = SerialPort::builder()
+        .baud_rate(BAUD_RATE)
+        .read_timeout(Some(Duration::from_secs(14)))
+        .open(port)
+        .expect("Failed to open port");
+
+    let spi = match fs::read(filename) {
+        Ok(f) => {
+            if f.len() != SPI_FLASH_SIZE {
+                return Ok(false)
+            };
+            f
+        },
+        Err(e) => panic!("{}", e)
+    };
+
+    let spi_ranges = vec![
+        SpiRange { cmd: 0x40, offset: 0, size: 2949120 },
+        SpiRange { cmd: 0x41, offset: 2949120, size: 163840 },
+        SpiRange { cmd: 0x42, offset: 3112960, size: 139264 },
+        SpiRange { cmd: 0x43, offset: 3252224, size: 8192 },
+        SpiRange { cmd: 0x47, offset: 3887104, size: 40960 },
+        SpiRange { cmd: 0x48, offset: 3928064, size: 4096 },
+        SpiRange { cmd: 0x49, offset: 3936256, size: 40960 },
+        SpiRange { cmd: 0x4b, offset: 4030464, size: 40960 },
+        SpiRange { cmd: 0x4c, offset: 3260416, size: 626688 }
+    ];
+
+    for spi_range in spi_ranges {
+        let mut offset = spi_range.offset;
+        let block_length = offset + spi_range.size;
+
+        while offset < block_length {
+            match uart::command_writespiflash(&port, &spi_range, offset, &spi) {
+                Ok(true) => print!("\rRestoring SPI flash to address {:#08x}", offset),
+                _ => panic!("Failed to restore SPI flash. Is the radio in normal mode?")
+            }
+            offset += CHUNK_LENGTH
+        }
+    }
+
+    Ok(true)
 }
 
 fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
@@ -148,6 +201,12 @@ fn main() {
                     match flash_firmware(&args[2], &args[4]) {
                         Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
                         _ => println!("Specified file is not exactly {} bytes", FIRMWARE_SIZE)
+                    }
+                }
+                "-r" => {
+                    match restore_spi_flash(&args[2], &args[4]) {
+                        Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
+                        _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
                     }
                 }
                 _ => {
