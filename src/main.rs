@@ -31,9 +31,8 @@ use spi::SpiRange;
 
 mod uart;
 
-const USAGE: &str = "
-rt890-flash
-Flashing and dumping tool for the Radtel RT-890.
+const HEADER: &str = "rt890-flash - Copyright 2024 bricky149";
+const USAGE: &str = "Flashing and dumping tool for the Radtel RT-890.
 
 rt890-flash -l
 rt890-flash -p PORT -d FILE
@@ -80,7 +79,7 @@ fn dump_spi_flash(port: &String, filename: &String) {
     for offset in 0..32768 {
         match uart::command_readspiflash(&port, offset) {
             Ok(Some(data)) => {
-                print!("\rDumping SPI flash from address {:#08x}", offset);
+                print!("\rDumping SPI flash from address {:#06x}", offset);
                 fw.write_all(&data).expect("Failed to dump SPI flash")
             }
             Ok(None) => break,
@@ -178,6 +177,9 @@ fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
 }
 
 fn main() {
+    // Always display header text
+    println!("{}", HEADER);
+
     let args: Vec<String> = args().collect();
     match args.len() {
         2 => { // Executable name with one argument
