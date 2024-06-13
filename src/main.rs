@@ -38,23 +38,25 @@ Flashing and dumping tool for the Radtel RT-890.
 rt890-flash -l
 rt890-flash -p PORT -d FILE
 rt890-flash -p PORT -f FILE
+rt890-flash -p PORT -r [-c] FILE
 
 -l
 List available ports, e.g. /dev/ttyUSB0
 
 -p PORT
-Port to read from, or write to.
+Port to read from or write to.
 
 -d FILE
-Read external SPI flash to file, e.g. spi_backup.bin
+Dump external SPI flash to file, e.g. spi_backup.bin
 Radio MUST be in normal mode.
 
 -f FILE
 Write firmware file to MCU flash, e.g. firmware.bin
 Radio MUST be in bootloader mode and will automatically restart.
 
--r FILE
+-r [-c] FILE
 Write flash dump to external SPI flash, e.g. spi_backup.bin
+If -c is specified, only calibration data will be written.
 Radio MUST be in normal mode and be manually restarted.
 ";
 
@@ -87,10 +89,10 @@ fn dump_spi_flash(port: &String, filename: &String) {
     }
 }
 
-fn restore_spi_flash(port: &String, filename: &String) -> Result<bool> {
+fn restore_spi_flash(port: &String, calib_only: bool, filename: &String) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(14)))
+        .read_timeout(Some(Duration::from_secs(3)))
         .open(port)
         .expect("Failed to open port");
 
@@ -104,17 +106,25 @@ fn restore_spi_flash(port: &String, filename: &String) -> Result<bool> {
         Err(e) => panic!("{}", e)
     };
 
-    let spi_ranges = vec![
-        SpiRange { cmd: 0x40, offset: 0, size: 2949120 },
-        SpiRange { cmd: 0x41, offset: 2949120, size: 163840 },
-        SpiRange { cmd: 0x42, offset: 3112960, size: 139264 },
-        SpiRange { cmd: 0x43, offset: 3252224, size: 8192 },
-        SpiRange { cmd: 0x47, offset: 3887104, size: 40960 },
-        SpiRange { cmd: 0x48, offset: 3928064, size: 4096 },
-        SpiRange { cmd: 0x49, offset: 3936256, size: 40960 },
-        SpiRange { cmd: 0x4b, offset: 4030464, size: 40960 },
-        SpiRange { cmd: 0x4c, offset: 3260416, size: 626688 }
-    ];
+    // TODO: Document these magic command bytes
+    let spi_ranges;
+    if calib_only {
+        spi_ranges = vec![
+            SpiRange { cmd: 0x48, offset: 3928064, size: 4096 }     // 3BF000 Calibration data
+        ];
+    } else {
+        spi_ranges = vec![
+            SpiRange { cmd: 0x40, offset: 0, size: 2949120 },
+            SpiRange { cmd: 0x41, offset: 2949120, size: 163840 },
+            SpiRange { cmd: 0x42, offset: 3112960, size: 139264 },
+            SpiRange { cmd: 0x43, offset: 3252224, size: 8192 },
+            SpiRange { cmd: 0x47, offset: 3887104, size: 40960 },
+            SpiRange { cmd: 0x48, offset: 3928064, size: 4096 },    // 3BF000 Calibration data
+            SpiRange { cmd: 0x49, offset: 3936256, size: 40960 },
+            SpiRange { cmd: 0x4b, offset: 4030464, size: 40960 },
+            SpiRange { cmd: 0x4c, offset: 3260416, size: 626688 }
+        ]; 
+    }
 
     for spi_range in spi_ranges {
         let mut offset = spi_range.offset;
@@ -181,7 +191,7 @@ fn main() {
                 println!("\t{}", p.port_name)
             }
         }
-        5 => { // Executable name with four arguments
+        5..=6 => { // Executable name with four or five arguments
             if args[1] != "-p" {
                 println!("{}", USAGE);
                 return
@@ -194,19 +204,38 @@ fn main() {
 
             match args[3].as_str() {
                 "-d" => {
-                    dump_spi_flash(&args[2], &args[4]);
-                    println!("\nSPI flash dump complete")
+                    if args[4] != "-c" {
+                        dump_spi_flash(&args[2], &args[4]);
+                        println!("\nSPI flash dump complete")
+                    } else {
+                        // Cannot specify -c here
+                        println!("{}", USAGE);
+                        return
+                    }
                 }
                 "-f" => {
-                    match flash_firmware(&args[2], &args[4]) {
-                        Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
-                        _ => println!("Specified file is not exactly {} bytes", FIRMWARE_SIZE)
+                    if args[4] != "-c" {
+                        match flash_firmware(&args[2], &args[4]) {
+                            Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
+                            _ => println!("Specified file is not exactly {} bytes", FIRMWARE_SIZE)
+                        }
+                    } else {
+                        // Cannot specify -c here
+                        println!("{}", USAGE);
+                        return
                     }
                 }
                 "-r" => {
-                    match restore_spi_flash(&args[2], &args[4]) {
-                        Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
-                        _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
+                    if args[4] != "-c" {
+                        match restore_spi_flash(&args[2], false, &args[4]) {
+                            Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
+                            _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
+                        }
+                    } else {
+                        match restore_spi_flash(&args[2], true, &args[5]) {
+                            Ok(true) => println!("\nCalibration restore complete. Reboot the radio now."),
+                            _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
+                        }
                     }
                 }
                 _ => {
