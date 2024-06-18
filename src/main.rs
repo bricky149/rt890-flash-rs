@@ -15,9 +15,6 @@
     limitations under the License.
 */
 
-extern crate nix;
-use nix::unistd::Uid;
-
 extern crate serialport5;
 use self::serialport5::*;
 
@@ -67,9 +64,9 @@ const SPI_FLASH_SIZE: usize = 4_194_304;
 fn dump_spi_flash(port: &String, filename: &String) {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(2)))
+        .read_timeout(Some(Duration::from_secs(20)))
         .open(port)
-        .expect("Failed to open port");
+        .expect("Failed to open port. Are you running with root/admin privileges?");
 
     let mut fw = match File::create(filename) {
         Ok(f) => f,
@@ -83,7 +80,7 @@ fn dump_spi_flash(port: &String, filename: &String) {
                 fw.write_all(&data).expect("Failed to dump SPI flash")
             }
             Ok(None) => break,
-            Err(e) => panic!("{}. Is the radio in normal mode?", e)
+            Err(e) => panic!("{}. Ensure the radio is in normal mode.", e)
         }
     }
 }
@@ -91,9 +88,9 @@ fn dump_spi_flash(port: &String, filename: &String) {
 fn restore_spi_flash(port: &String, calib_only: bool, filename: &String) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(3)))
+        .read_timeout(Some(Duration::from_secs(20)))
         .open(port)
-        .expect("Failed to open port");
+        .expect("Failed to open port. Are you running with root/admin privileges?");
 
     let spi = match fs::read(filename) {
         Ok(f) => {
@@ -132,7 +129,7 @@ fn restore_spi_flash(port: &String, calib_only: bool, filename: &String) -> Resu
         while offset < block_length {
             match uart::command_writespiflash(&port, &spi_range, offset, &spi) {
                 Ok(true) => print!("\rRestoring SPI flash to address {:#08x}", offset),
-                _ => panic!("Failed to restore SPI flash. Is the radio in normal mode?")
+                _ => panic!("Failed to restore SPI flash. Ensure the radio is in normal mode.")
             }
             offset += CHUNK_LENGTH
         }
@@ -144,9 +141,9 @@ fn restore_spi_flash(port: &String, calib_only: bool, filename: &String) -> Resu
 fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(2)))
+        .read_timeout(Some(Duration::from_secs(20)))
         .open(port)
-        .expect("Failed to open port");
+        .expect("Failed to open port. Are you running with root/admin privileges?");
 
     let fw = match fs::read(filename) {
         Ok(f) => {
@@ -160,7 +157,7 @@ fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
 
     match uart::command_eraseflash(&port) {
         Ok(true) => println!("MCU flash erased"),
-        _ => panic!("Failed to erase MCU flash. Is the radio in bootloader mode?")
+        _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
     }
 
     let mut offset = 0;
@@ -168,7 +165,7 @@ fn flash_firmware(port: &String, filename: &String) -> Result<bool> {
     while offset < FIRMWARE_SIZE {
         match uart::command_writeflash(&port, offset, &fw) {
             Ok(true) => print!("\rFlashing firmware to address {:#06x}", offset),
-            _ => panic!("Failed to write firmware to MCU flash")
+            _ => panic!("Failed to write firmware to MCU flash. Ensure your radio is firmly connected.")
         }
         offset += CHUNK_LENGTH
     }
@@ -199,10 +196,8 @@ fn main() {
                 return
             }
 
-            if !Uid::effective().is_root() {
-                println!("You must run this executable with root permissions");
-                return
-            }
+            // User may have port privileges, running as root/admin is not needed
+            // https://chirpmyradio.com/projects/chirp/wiki/ChirpOnLinux#Serial-port-permissions
 
             match args[3].as_str() {
                 "-d" => {

@@ -12,5 +12,4 @@ opt-level = "z"
 strip = true
 
 [dependencies]
-nix = "0.23.2"
 serialport5 = "5.0.*"
