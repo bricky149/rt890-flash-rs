@@ -15,7 +15,7 @@
     limitations under the License.
 */
 
-mod fileops;
+mod helper;
 mod platform;
 mod spi;
 mod uart;
@@ -29,6 +29,7 @@ const USAGE: &str = "Flashing and dumping tool for the Radtel RT-890.
 rt890-flash -l
 rt890-flash -p PORT -d FILE
 rt890-flash -p PORT -f FILE
+rt890-flash -p PORT -ff FILE
 rt890-flash -p PORT -r [-c] FILE
 
 -l
@@ -43,6 +44,10 @@ Radio MUST be in normal mode.
 
 -f FILE
 Write firmware file to MCU flash, e.g. firmware.bin
+Radio MUST be in bootloader mode and will automatically restart.
+
+-ff FILE
+Same as -f but disables file size check. Useful for flashing RT-4D.
 Radio MUST be in bootloader mode and will automatically restart.
 
 -r [-c] FILE
@@ -75,7 +80,7 @@ fn main() {
             }
 
             if !platform::runas_admin() {
-                println!("You must run this executable as admin (Windows) or root (Linux)");
+                println!("You must run this executable as root (Linux) or admin (Windows)");
                 return
             }
 
@@ -92,9 +97,21 @@ fn main() {
                 }
                 "-f" => {
                     if args[4] != "-c" {
-                        match flash_firmware(&args[2], &args[4]) {
+                        match flash_firmware(&args[2], &args[4], true) {
                             Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
-                            _ => println!("Specified file is not exactly {} bytes", FIRMWARE_SIZE)
+                            _ => println!("Specified file is not exactly 60416 bytes")
+                        }
+                    } else {
+                        // Cannot specify -c here
+                        println!("{}", USAGE);
+                        return
+                    }
+                }
+                "-ff" => {
+                    if args[4] != "-c" {
+                        match flash_firmware(&args[2], &args[4], false) {
+                            Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
+                            _ => println!("Invalid file path given")
                         }
                     } else {
                         // Cannot specify -c here

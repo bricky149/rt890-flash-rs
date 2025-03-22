@@ -17,7 +17,11 @@
 
 use std::fs::{self, File};
 
-pub fn read_file(path: &String, expected_size: usize) -> Option<Vec<u8>> {
+pub fn create_dynamic_array(size: usize) -> Vec<u8> {
+    (0..size).map(|_| 0).collect()
+}
+
+pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>> {
     match fs::read(path) {
         Ok(f) => {
             if f.len() != expected_size {
@@ -26,7 +30,14 @@ pub fn read_file(path: &String, expected_size: usize) -> Option<Vec<u8>> {
             return Some(f)
         },
         Err(e) => panic!("{}", e)
-    };
+    }
+}
+
+pub fn read_file_unchecked(path: &String) -> Option<Vec<u8>> {
+    match fs::read(path) {
+        Ok(f) => Some(f),
+        Err(e) => panic!("{}", e)
+    }
 }
 
 pub fn create_file(path: &String) -> Option<File> {

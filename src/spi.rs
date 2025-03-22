@@ -18,15 +18,25 @@
 extern crate serialport5;
 use self::serialport5::*;
 
-use crate::{fileops, uart};
+use crate::{helper, uart};
 use std::io::Write;
 use std::time::Duration;
 
-pub const FIRMWARE_SIZE: usize = 60_416;
 pub const SPI_FLASH_SIZE: usize = 4_194_304;
 
 const BAUD_RATE: u32 = 115_200;
-const CHUNK_LENGTH: usize = 128;
+
+pub enum FlashDataFlags {
+    EnglishPrompt = 0x40,
+    EnglishAlphaNum = 0x41,
+    BigFont = 0x42,
+    SmallFont = 0x43,
+    StartupLogo = 0x47,
+    Calibration = 0x48,
+    MemoriesAndSettings = 0x49,
+    UnknownBlock = 0x4B,         // Extended settings?
+    ChinesePrompt = 0x4C
+}
 
 pub struct SpiRange {
     pub cmd: u8,
@@ -34,14 +44,14 @@ pub struct SpiRange {
     size: usize
 }
 
-pub fn dump_spi_flash(port: &String, filepath: &String) {
+pub fn dump_spi_flash(port: &String, file_path: &String) {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(20)))
+        .read_timeout(Some(Duration::from_secs(30)))
         .open(port)
         .expect("Failed to open port. Are you running with root/admin privileges?");
 
-    let mut fw = match fileops::create_file(filepath) {
+    let mut fw = match helper::create_file(file_path) {
         Some(f) => f,
         _ => return         // Panic already called from function
     };
@@ -58,35 +68,35 @@ pub fn dump_spi_flash(port: &String, filepath: &String) {
     }
 }
 
-pub fn restore_spi_flash(port: &String, calib_only: bool, filepath: &String) -> Result<bool> {
+pub fn restore_spi_flash(port: &String, calib_only: bool, file_path: &String) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(20)))
+        .read_timeout(Some(Duration::from_secs(30)))
         .open(port)
         .expect("Failed to open port. Are you running with root/admin privileges?");
 
-    let spi = match fileops::read_file(filepath, SPI_FLASH_SIZE) {
+    let spi = match helper::read_file_checked(file_path, SPI_FLASH_SIZE) {
         Some(f) => f,
         _ => return Ok(false)   // Either None was returned or a panic was called
     };
 
-    // TODO: Document these magic command bytes
     let spi_ranges;
     if calib_only {
         spi_ranges = vec![
-            SpiRange { cmd: 0x48, offset: 3928064, size: 4096 }     // 3BF000 Calibration data
+            SpiRange { cmd: FlashDataFlags::Calibration as u8, offset: 3928064, size: 4096 }
         ];
     } else {
         spi_ranges = vec![
-            SpiRange { cmd: 0x40, offset: 0, size: 2949120 },
-            SpiRange { cmd: 0x41, offset: 2949120, size: 163840 },
-            SpiRange { cmd: 0x42, offset: 3112960, size: 139264 },
-            SpiRange { cmd: 0x43, offset: 3252224, size: 8192 },
-            SpiRange { cmd: 0x47, offset: 3887104, size: 40960 },
-            SpiRange { cmd: 0x48, offset: 3928064, size: 4096 },    // 3BF000 Calibration data
-            SpiRange { cmd: 0x49, offset: 3936256, size: 40960 },
-            SpiRange { cmd: 0x4b, offset: 4030464, size: 40960 },
-            SpiRange { cmd: 0x4c, offset: 3260416, size: 626688 }
+            SpiRange { cmd: FlashDataFlags::EnglishPrompt as u8, offset: 0, size: 2949120 },
+            SpiRange { cmd: FlashDataFlags::EnglishAlphaNum as u8, offset: 2949120, size: 163840 },
+            SpiRange { cmd: FlashDataFlags::BigFont as u8, offset: 3112960, size: 139264 },
+            SpiRange { cmd: FlashDataFlags::SmallFont as u8, offset: 3252224, size: 8192 },
+            SpiRange { cmd: FlashDataFlags::ChinesePrompt as u8, offset: 3260416, size: 626688 },
+            SpiRange { cmd: FlashDataFlags::StartupLogo as u8, offset: 3887104, size: 40960 },
+            SpiRange { cmd: FlashDataFlags::Calibration as u8, offset: 3928064, size: 4096 },
+            SpiRange { cmd: FlashDataFlags::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Doesn't pick up extended settings
+            //SpiRange { cmd: FlashDataFlags::ExtendedSettings as u8, offset: 4018176, size: 40960 },  // 0x3D5
+            SpiRange { cmd: FlashDataFlags::UnknownBlock as u8, offset: 4030464, size: 40960 }         // 0x3D8, possibly a bug as misses settings above
         ]; 
     }
 
@@ -99,38 +109,61 @@ pub fn restore_spi_flash(port: &String, calib_only: bool, filepath: &String) -> 
                 Ok(true) => print!("\rRestoring SPI flash to address {:#08x}", offset),
                 _ => panic!("Failed to restore SPI flash. Ensure the radio is in normal mode.")
             }
-            offset += CHUNK_LENGTH
+            offset += 128 // CHUNK_LENGTH on RT-890
         }
     }
 
     Ok(true)
 }
 
-pub fn flash_firmware(port: &String, filepath: &String) -> Result<bool> {
+pub fn flash_firmware(port: &String, file_path: &String, check_size: bool) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
-        .read_timeout(Some(Duration::from_secs(20)))
+        .read_timeout(Some(Duration::from_secs(30)))
         .open(port)
         .expect("Failed to open port. Are you running with root/admin privileges?");
 
-    let fw = match fileops::read_file(filepath, FIRMWARE_SIZE) {
-        Some(f) => f,
-        _ => return Ok(false)   // Either None was returned or a panic was called
+    let chunk_length;
+    let firmware_size;
+    let fw = if check_size {
+        chunk_length = 128;
+        firmware_size = 60416;
+        // Probably an RT-890
+        match helper::read_file_checked(file_path, firmware_size) {
+            Some(f) => f,
+            _ => return Ok(false)   // Either None was returned or a panic was called
+        }
+    } else {
+        chunk_length = 1024;
+        // Probably an RT-4D
+        match helper::read_file_unchecked(file_path) {
+            Some(f) => {
+                firmware_size = f.len();
+                f
+            },
+            _ => return Ok(false)   // Either None was returned or a panic was called
+        }
     };
 
-    match uart::command_eraseflash(&port) {
-        Ok(true) => println!("MCU flash erased"),
-        _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
+    if check_size {
+        match uart::command_eraseflash_890(&port) {
+            Ok(true) => println!("MCU flash erased"),
+            _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
+        }
+    } else {
+        match uart::command_eraseflash_4d(&port) {
+            Ok(true) => println!("MCU flash erased"),
+            _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
+        }
     }
 
     let mut offset = 0;
-
-    while offset < FIRMWARE_SIZE {
-        match uart::command_writeflash(&port, offset, &fw) {
+    while offset < firmware_size {
+        match uart::command_writeflash(&port, offset, &fw, chunk_length) {
             Ok(true) => print!("\rFlashing firmware to address {:#06x}", offset),
             _ => panic!("Failed to write firmware to MCU flash. Ensure your radio is firmly connected.")
         }
-        offset += CHUNK_LENGTH
+        offset += chunk_length
     }
 
     Ok(true)
