@@ -51,7 +51,7 @@ pub fn dump_spi_flash(port: &String, file_path: &String) {
         .open(port)
         .expect("Failed to open port. Are you running with root/admin privileges?");
 
-    let mut fw = match helper::create_file(file_path) {
+    let mut spi = match helper::create_file(file_path) {
         Some(f) => f,
         _ => return         // Panic already called from function
     };
@@ -60,7 +60,7 @@ pub fn dump_spi_flash(port: &String, file_path: &String) {
         match uart::command_readspiflash(&port, offset) {
             Ok(Some(data)) => {
                 print!("\rDumping SPI flash from address {:#06x}", offset);
-                fw.write_all(&data).expect("Failed to dump SPI flash")
+                spi.write_all(&data).expect("Failed to dump SPI flash")
             }
             Ok(None) => break,
             Err(e) => panic!("{}. Ensure the radio is in normal mode.", e)
@@ -80,13 +80,12 @@ pub fn restore_spi_flash(port: &String, calib_only: bool, file_path: &String) ->
         _ => return Ok(false)   // Either None was returned or a panic was called
     };
 
-    let spi_ranges;
-    if calib_only {
-        spi_ranges = vec![
+    let spi_ranges = if calib_only {
+        vec![
             SpiRange { cmd: FlashDataFlags::Calibration as u8, offset: 3928064, size: 4096 }
-        ];
+        ]
     } else {
-        spi_ranges = vec![
+        vec![
             SpiRange { cmd: FlashDataFlags::EnglishPrompt as u8, offset: 0, size: 2949120 },
             SpiRange { cmd: FlashDataFlags::EnglishAlphaNum as u8, offset: 2949120, size: 163840 },
             SpiRange { cmd: FlashDataFlags::BigFont as u8, offset: 3112960, size: 139264 },
@@ -97,8 +96,8 @@ pub fn restore_spi_flash(port: &String, calib_only: bool, file_path: &String) ->
             SpiRange { cmd: FlashDataFlags::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Doesn't pick up extended settings
             //SpiRange { cmd: FlashDataFlags::ExtendedSettings as u8, offset: 4018176, size: 40960 },  // 0x3D5
             SpiRange { cmd: FlashDataFlags::UnknownBlock as u8, offset: 4030464, size: 40960 }         // 0x3D8, possibly a bug as misses settings above
-        ]; 
-    }
+        ]
+    };
 
     for spi_range in spi_ranges {
         let mut offset = spi_range.offset;

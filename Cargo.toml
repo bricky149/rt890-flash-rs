@@ -3,9 +3,6 @@ name = "rt890-flash"
 version = "1.2.0"
 edition = "2024"
 
-[profile.dev]
-overflow-checks = false
-
 [profile.release]
 lto = true
 opt-level = "z"

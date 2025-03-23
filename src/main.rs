@@ -91,8 +91,7 @@ fn main() {
                         println!("\nSPI flash dump complete")
                     } else {
                         // Cannot specify -c here
-                        println!("{}", USAGE);
-                        return
+                        println!("{}", USAGE)
                     }
                 }
                 "-f" => {
@@ -103,8 +102,7 @@ fn main() {
                         }
                     } else {
                         // Cannot specify -c here
-                        println!("{}", USAGE);
-                        return
+                        println!("{}", USAGE)
                     }
                 }
                 "-ff" => {
@@ -115,8 +113,7 @@ fn main() {
                         }
                     } else {
                         // Cannot specify -c here
-                        println!("{}", USAGE);
-                        return
+                        println!("{}", USAGE)
                     }
                 }
                 "-r" => {

@@ -18,6 +18,9 @@
 use std::fs::{self, File};
 
 pub fn create_dynamic_array(size: usize) -> Vec<u8> {
+    // Create a zero-padded Vec of a set size
+    // We cannot create an array with a size only known at run-time and
+    // with_capacity creates an empty Vec, causing assignments to fail
     (0..size).map(|_| 0).collect()
 }
 
@@ -26,8 +29,8 @@ pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>>
         Ok(f) => {
             if f.len() != expected_size {
                 return None
-            };
-            return Some(f)
+            }
+            Some(f) 
         },
         Err(e) => panic!("{}", e)
     }
