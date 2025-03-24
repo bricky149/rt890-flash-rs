@@ -98,7 +98,7 @@ fn main() {
                     if args[4] != "-c" {
                         match flash_firmware(&args[2], &args[4], true) {
                             Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
-                            _ => println!("Specified file is not exactly 60416 bytes")
+                            _ => println!("Specified file is not exactly {} bytes", FW_890_SIZE)
                         }
                     } else {
                         // Cannot specify -c here
@@ -109,7 +109,7 @@ fn main() {
                     if args[4] != "-c" {
                         match flash_firmware(&args[2], &args[4], false) {
                             Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
-                            _ => println!("Invalid file path given")
+                            _ => println!("Invalid file given")
                         }
                     } else {
                         // Cannot specify -c here

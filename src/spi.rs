@@ -22,9 +22,10 @@ use crate::{helper, uart};
 use std::io::Write;
 use std::time::Duration;
 
-pub const SPI_FLASH_SIZE: usize = 4_194_304;
-
 const BAUD_RATE: u32 = 115_200;
+const FW_4D_FLASH_SIZE: usize = 251_904;
+pub const FW_890_SIZE: usize = 60_416;
+pub const SPI_FLASH_SIZE: usize = 4_194_304;
 
 pub enum FlashDataFlags {
     EnglishPrompt = 0x40,
@@ -125,22 +126,20 @@ pub fn flash_firmware(port: &String, file_path: &String, check_size: bool) -> Re
     let chunk_length;
     let firmware_size;
     let fw = if check_size {
+        // RT-890
         chunk_length = 128;
-        firmware_size = 60416;
-        // Probably an RT-890
+        firmware_size = FW_890_SIZE;
         match helper::read_file_checked(file_path, firmware_size) {
             Some(f) => f,
             _ => return Ok(false)   // Either None was returned or a panic was called
         }
     } else {
+        // RT-4D
         chunk_length = 1024;
-        // Probably an RT-4D
-        match helper::read_file_unchecked(file_path) {
-            Some(f) => {
-                firmware_size = f.len();
-                f
-            },
-            _ => return Ok(false)   // Either None was returned or a panic was called
+        firmware_size = FW_4D_FLASH_SIZE;
+        match helper::read_file_padded(file_path, firmware_size) {
+            Ok(f) => f,
+            _ => return Ok(false)   // File read error was returned
         }
     };
 

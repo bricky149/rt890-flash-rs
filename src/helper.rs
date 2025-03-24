@@ -15,7 +15,7 @@
     limitations under the License.
 */
 
-use std::fs::{self, File};
+use std::{fs::{self, File}, io::{self, Read}};
 
 pub fn create_dynamic_array(size: usize) -> Vec<u8> {
     // Create a zero-padded Vec of a set size
@@ -25,6 +25,10 @@ pub fn create_dynamic_array(size: usize) -> Vec<u8> {
 }
 
 pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>> {
+    // RT-890 expects the firmware file to be an exact size
+    // We could pad files ourselves but it would likely
+    // increase reports of radios failing to turn on due
+    // to flashing things that are not valid files
     match fs::read(path) {
         Ok(f) => {
             if f.len() != expected_size {
@@ -36,11 +40,14 @@ pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>>
     }
 }
 
-pub fn read_file_unchecked(path: &String) -> Option<Vec<u8>> {
-    match fs::read(path) {
-        Ok(f) => Some(f),
-        Err(e) => panic!("{}", e)
-    }
+pub fn read_file_padded(file_path: &str, size: usize) -> io::Result<Vec<u8>> {
+    // RT-4D firmware files can be of any size up to FW_4D_FLASH_SIZE
+    // Padding it allows for the radio to reboot itself after flashing
+    let mut buffer = vec![0u8; size];
+    let mut file = File::open(file_path)?;
+    let _bytes_read = file.read(&mut buffer[..])?;
+
+    Ok(buffer)
 }
 
 pub fn create_file(path: &String) -> Option<File> {

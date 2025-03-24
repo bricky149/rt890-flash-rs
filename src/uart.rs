@@ -33,7 +33,7 @@ pub enum CommandBytes {
 //  FlashModeResponse = 0xFF
 //}
 
-fn append_checksum(command: &mut [u8]) {
+fn append_checksum(command: &mut [u8], read_only: bool) {
     let last_idx = command.len() - 1;
     let mut sum: u8 = 0;
     // Relies on arithmetic overflows
@@ -42,7 +42,7 @@ fn append_checksum(command: &mut [u8]) {
     }
     // If the buffer size is bigger than 132, it isn't an RT-890
     // Both radios send 4-byte packets when reading SPI flash
-    if last_idx != 3 && last_idx != 1027 {
+    if last_idx == 1027 || (last_idx != 131 && !read_only) {
         command[last_idx] = sum.wrapping_add(72)
     } else {
         command[last_idx] = sum
@@ -58,7 +58,7 @@ fn verify_checksum(command: &[u8]) -> bool {
     }
     // If the buffer size is bigger than 132, it isn't an RT-890
     // Both radios send 4-byte packets when reading SPI flash
-    if last_idx != 3 && last_idx != 1027 {
+    if last_idx != 3 && last_idx != 131 {
         command[last_idx] == sum.wrapping_add(72)
     } else {
         command[last_idx] == sum
@@ -94,15 +94,13 @@ pub fn command_eraseflash_4d(mut port: &SerialPort) -> Result<bool> {
             block,
             0 // Checksum of command bytes
         ];
-        append_checksum(&mut command);
+        append_checksum(&mut command, false);
         port.write_all(&command)?;
 
         let mut response = [0u8];
         port.read_exact(&mut response)?;
         match response {
-            [0x06] => {
-                block += 1
-            },
+            [0x06] => block += 1,
             _ => return Ok(false)
         }
     }
@@ -116,16 +114,10 @@ pub fn command_writeflash(mut port: &SerialPort, offset: usize, fw: &[u8], chunk
     command[0] = CommandBytes::WriteFwFlash as u8;
     command[1] = ((offset >> 8) & 0xFF) as u8;
     command[2] = ((offset) & 0xFF) as u8;
+    command[3..chunk_length+3].copy_from_slice(&fw[offset..offset+chunk_length]);
 
-    // Prevent from reading out-of-bounds
-    if offset+chunk_length < fw.len() {
-        command[3..chunk_length+3].copy_from_slice(&fw[offset..offset+chunk_length]);
-    } else {
-        let final_chunk = fw.len() - offset;
-        command[3..final_chunk+3].copy_from_slice(&fw[offset..offset+final_chunk]);
-    }
     // last command[] index reserved for checksum
-    append_checksum(&mut command);
+    append_checksum(&mut command, false);
     port.write_all(&command)?;
 
     let mut response = [0u8];
@@ -142,7 +134,7 @@ pub fn command_readspiflash(mut port: &SerialPort, offset: usize) -> Result<Opti
     command[1] = ((offset >> 8) & 0xFF) as u8;
     command[2] = ((offset) & 0xFF) as u8;
 
-    append_checksum(&mut command);
+    append_checksum(&mut command, true);
     port.write_all(&command)?;
 
     let mut response = create_dynamic_array(1028);
@@ -164,6 +156,7 @@ pub fn command_readspiflash(mut port: &SerialPort, offset: usize) -> Result<Opti
 }
 
 pub fn command_writespiflash(mut port: &SerialPort, spi_range: &SpiRange, offset: usize, spi: &[u8]) -> Result<bool> {
+    // TODO: Update to support RT-4D once relevant SPI ranges are published
     let block_offset = (offset - spi_range.offset) / 128;
 
     let mut command = [0u8; 132];
@@ -173,7 +166,7 @@ pub fn command_writespiflash(mut port: &SerialPort, spi_range: &SpiRange, offset
     command[3..130].copy_from_slice(&spi[offset..offset+128]); // CHUNK_LENGTH on RT-890
 
     // last command[] index reserved for checksum
-    append_checksum(&mut command);
+    append_checksum(&mut command, false);
     port.write_all(&command)?;
 
     let mut response = [0u8];
