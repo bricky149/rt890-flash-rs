@@ -22,10 +22,20 @@ use crate::{helper, uart};
 use std::io::Write;
 use std::time::Duration;
 
-const BAUD_RATE: u32 = 115_200;
-const FW_4D_FLASH_SIZE: usize = 251_904;
 pub const FW_890_SIZE: usize = 60_416;
 pub const SPI_FLASH_SIZE: usize = 4_194_304;
+
+const BAUD_RATE: u32 = 115_200;
+const FW_4D_FLASH_SIZE: usize = 251_904;
+const DMR_FW_4D_SIZE: usize = 1_527_808;
+
+const DMR_FW_4D_OFFSETS: [usize; 43] = [
+    17825824, 18874400, 19922976, 20971552, 22020128, 23068704, 24117280, 25165856, 26214432, 27263008,
+    28311584, 29360160, 30408736, 31457312, 32505888, 33554648, 50331864, 67109080, 83886296, 100663512,
+    117440728, 134217944, 150995160, 167772376, 184549592, 201326808, 218104024, 234881240, 251658456,
+    268435672, 285212888, 301990104, 318767320, 335544536, 352321752, 369098968, 385876184, 402653216,
+    403701792, 404750368, 405798944, 406847520, 407896096
+];
 
 pub enum FlashDataFlags {
     EnglishPrompt = 0x40,
@@ -116,7 +126,7 @@ pub fn restore_spi_flash(port: &String, calib_only: bool, file_path: &String) ->
     Ok(true)
 }
 
-pub fn flash_firmware(port: &String, file_path: &String, check_size: bool) -> Result<bool> {
+pub fn flash_mcu_firmware(port: &String, file_path: &String, check_size: bool) -> Result<bool> {
     let port = SerialPort::builder()
         .baud_rate(BAUD_RATE)
         .read_timeout(Some(Duration::from_secs(30)))
@@ -144,25 +154,71 @@ pub fn flash_firmware(port: &String, file_path: &String, check_size: bool) -> Re
     };
 
     if check_size {
-        match uart::command_eraseflash_890(&port) {
-            Ok(true) => println!("MCU flash erased"),
-            _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
+        match uart::command_erasemcuflash_890(&port) {
+            Ok(true) => println!("MCU firmware flash erased"),
+            _ => panic!("Failed to erase radio firmware flash. Ensure the radio is in bootloader mode.")
         }
     } else {
-        match uart::command_eraseflash_4d(&port) {
-            Ok(true) => println!("MCU flash erased"),
-            _ => panic!("Failed to erase MCU flash. Ensure the radio is in bootloader mode.")
+        match uart::command_erasemcuflash_4d(&port) {
+            Ok(true) => println!("MCU firmware flash erased"),
+            _ => panic!("Failed to erase radio firmware flash. Ensure the radio is in bootloader mode.")
         }
     }
 
     let mut offset = 0;
     while offset < firmware_size {
-        match uart::command_writeflash(&port, offset, &fw, chunk_length) {
-            Ok(true) => print!("\rFlashing firmware to address {:#06x}", offset),
-            _ => panic!("Failed to write firmware to MCU flash. Ensure your radio is firmly connected.")
+        match uart::command_writemcuflash(&port, offset, &fw, chunk_length) {
+            Ok(true) => print!("\rFlashing radio firmware to address {:#06x}", offset),
+            _ => panic!("Failed to write radio firmware. Ensure your radio is firmly connected.")
         }
         offset += chunk_length
     }
 
     Ok(true)
+}
+
+pub fn flash_dmr_firmware(port: &String, file_path: &String) -> Result<bool> {
+    // 10ms retry time as per original updater code
+    let port = SerialPort::builder()
+        .baud_rate(BAUD_RATE)
+        .read_timeout(Some(Duration::from_millis(10)))
+        .open(port)
+        .expect("Failed to open port. Are you running with root/admin privileges?");
+
+    let fw = match helper::read_file_checked(file_path, DMR_FW_4D_SIZE) {
+        Some(f) => f,
+        _ => return Ok(false)   // Either None was returned or a panic was called
+    };
+
+    // Wait for the radio to connect so we can intercept it
+    // We cannot flash DMR firmware without doing this first
+    loop {
+        match uart::command_initdmrflash(&port) {
+            Ok(true) => break,
+            _ => print!("\rWaiting for radio...")
+        }
+    }
+
+    for erase_offset in DMR_FW_4D_OFFSETS {
+        match uart::command_erasedmrflash(&port, erase_offset) {
+            Ok(true) => print!("\rErasing DMR firmware flash"),
+            _ => panic!("Failed to erase DMR firmware flash. Ensure your radio is firmly connected.")
+        }
+    }
+
+    let mut fw_offset = 0;
+    for block in 0..373 {
+        let page_offset = 272 + block * 16;
+        match uart::command_writedmrflash(&port, page_offset, &fw, fw_offset) {
+            Ok(true) => print!("\rFlashing DMR firmware ({}/373)", block),
+            _ => panic!("Failed to write DMR firmware. Ensure your radio is firmly connected.")
+        }
+        fw_offset += 4096
+    }
+
+    Ok(true)
+}
+
+pub fn get_available_ports() -> Vec<SerialPortInfo> {
+    serialport5::available_ports().expect("No ports found")
 }

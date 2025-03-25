@@ -17,10 +17,10 @@
 
 mod helper;
 mod platform;
-mod spi;
+mod radio;
 mod uart;
 
-use spi::*;
+use radio::*;
 use std::env::args;
 
 const HEADER: &str = "rt890-flash - Copyright 2024-2025 bricky149";
@@ -30,6 +30,7 @@ rt890-flash -l
 rt890-flash -p PORT -d FILE
 rt890-flash -p PORT -f FILE
 rt890-flash -p PORT -ff FILE
+rt890-flash -p PORT -fdmr FILE
 rt890-flash -p PORT -r [-c] FILE
 
 -l
@@ -43,12 +44,16 @@ Dump external SPI flash to file, e.g. spi_backup.bin
 Radio MUST be in normal mode.
 
 -f FILE
-Write firmware file to MCU flash, e.g. firmware.bin
-Radio MUST be in bootloader mode and will automatically restart.
+Write radio firmware file to MCU flash, e.g. firmware.bin
+Radio MUST be in flash mode and will automatically restart.
 
 -ff FILE
 Same as -f but disables file size check. Useful for flashing RT-4D.
-Radio MUST be in bootloader mode and will automatically restart.
+Radio MUST be in flash mode and will automatically restart.
+
+-fdmr FILE
+Write DMR firmware file to MCU flash, e.g. firmware.bin
+Radio MUST be in DMR update mode and be manually restarted.
 
 -r [-c] FILE
 Write flash dump to external SPI flash, e.g. spi_backup.bin
@@ -69,7 +74,7 @@ fn main() {
             }
 
             println!("Ports available:");
-            for p in uart::get_available_ports() {
+            for p in get_available_ports() {
                 println!("\t{}", p.port_name)
             }
         }
@@ -96,8 +101,8 @@ fn main() {
                 }
                 "-f" => {
                     if args[4] != "-c" {
-                        match flash_firmware(&args[2], &args[4], true) {
-                            Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
+                        match flash_mcu_firmware(&args[2], &args[4], true) {
+                            Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
                             _ => println!("Specified file is not exactly {} bytes", FW_890_SIZE)
                         }
                     } else {
@@ -107,8 +112,19 @@ fn main() {
                 }
                 "-ff" => {
                     if args[4] != "-c" {
-                        match flash_firmware(&args[2], &args[4], false) {
-                            Ok(true) => println!("\nFirmware flash complete. Radio should now reboot."),
+                        match flash_mcu_firmware(&args[2], &args[4], false) {
+                            Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
+                            _ => println!("Invalid file given")
+                        }
+                    } else {
+                        // Cannot specify -c here
+                        println!("{}", USAGE)
+                    }
+                }
+                "-fdmr" => {
+                    if args[4] != "-c" {
+                        match flash_dmr_firmware(&args[2], &args[4]) {
+                            Ok(true) => println!("\nDMR firmware flash complete. Reboot the radio now."),
                             _ => println!("Invalid file given")
                         }
                     } else {
