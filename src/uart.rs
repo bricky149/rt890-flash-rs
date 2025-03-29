@@ -66,11 +66,15 @@ impl RadioPacket {
         self.buffer[sum_index] == sum
     }
 
-    pub fn erase_mcu_flash_890(&mut self) -> Result<bool> {
-        // Undocumented, assuming firmware block is read-only if not passed 
+    pub fn erase_mcu_flash(&mut self, is_890: bool) -> Result<bool> {
+        // Undocumented, assuming access is read-only if not passed 
         self.buffer[3] = 0x55;
         // last index reserved for checksum
-        self.append_checksum(0, 4);
+        if is_890 {
+            self.append_checksum(0, 4)
+        } else {
+            self.append_checksum(72, 4)
+        }
         self.port.write_all(&self.buffer[..5])?;
 
         let mut response = [0u8];
@@ -79,26 +83,6 @@ impl RadioPacket {
             [0x06] => Ok(true),
             _ => Ok(false)
         }
-    }
-
-    pub fn erase_mcu_flash_4d(&mut self) -> Result<bool> {
-        for block in 0x10..=0x55 {
-            self.buffer[1] = 0x33;
-            self.buffer[2] = 0x05;
-            self.buffer[3] = block;
-            // last index reserved for checksum
-            self.append_checksum(72, 4);
-            self.port.write_all(&self.buffer[..5])?;
-    
-            let mut response = [0u8];
-            self.port.read_exact(&mut response)?;
-            match response {
-                [0x06] => continue,
-                _ => return Ok(false)
-            }
-        }
-    
-        Ok(true)
     }
 
     pub fn write_mcu_flash(&mut self, offset: usize, fw_data: &[u8]) -> Result<bool> {
@@ -224,7 +208,7 @@ impl DmrPacket {
         self.buffer[9] = (offset & 0xFF) as u8;
         self.buffer[10] = ((offset >> 8) & 0xFF) as u8;
         self.buffer[11] = 0;
-        self.buffer[12..4108].copy_from_slice(fw_data);
+        self.buffer[12..].copy_from_slice(fw_data);
 
         match self.port.write_all(&self.buffer) {
             Ok(()) => Ok(true),

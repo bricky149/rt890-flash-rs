@@ -54,7 +54,7 @@ pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
 pub fn read_file_padded(file_path: &str, size: usize) -> io::Result<Vec<u8>> {
     // RT-4D radio firmware files can be of any size up to FW_4D_FLASH_SIZE
     // Padding it allows for the radio to reboot itself after flashing
-    let mut buffer = vec![0u8; size];
+    let mut buffer = create_padded_array(size);
     let mut file = File::open(file_path)?;
     let _bytes_read = file.read(&mut buffer[..])?;
 
