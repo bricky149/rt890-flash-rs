@@ -17,6 +17,19 @@
 
 use std::{fs::{self, File}, io::{self, Read}};
 
+#[cfg(unix)]
+pub fn has_serial_access(user: &str) -> bool {
+    let group_file = fs::read_to_string("/etc/group")
+        .expect("Unable to get available groups");
+
+    // Find the "dialout" group and check if the user is listed
+    group_file
+        .lines()
+        .find(|line| line.starts_with("dialout:"))
+        .map(|line| line.contains(user))
+        .unwrap_or(false)
+}
+
 pub fn create_padded_array(size: usize) -> Vec<u8> {
     // Create a zero-padded Vec of a set size
     // We cannot create an array with a size only known at run-time and
@@ -24,7 +37,7 @@ pub fn create_padded_array(size: usize) -> Vec<u8> {
     (0..size).map(|_| 0).collect()
 }
 
-pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>> {
+pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
     // RT-890 expects firmware files to be an exact size
     // RT-4D expects DMR firmware files to be an exact size
     match fs::read(path) {
@@ -34,7 +47,7 @@ pub fn read_file_checked(path: &String, expected_size: usize) -> Option<Vec<u8>>
             }
             Some(f)
         },
-        Err(e) => panic!("{}", e)
+        Err(_e) => None
     }
 }
 
@@ -48,9 +61,9 @@ pub fn read_file_padded(file_path: &str, size: usize) -> io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
-pub fn create_file(path: &String) -> Option<File> {
+pub fn create_file(path: &str) -> Option<File> {
     match File::create(path) {
         Ok(f) => Some(f),
-        Err(e) => panic!("{}", e)
+        Err(_e) => None
     }
 }

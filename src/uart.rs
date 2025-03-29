@@ -1,5 +1,5 @@
 /*
-    Copyright 2024 Bricky
+    Copyright 2024-2025 Bricky
     https://github.com/bricky149
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,220 +18,217 @@
 extern crate serialport5;
 use self::serialport5::*;
 
-use crate::{helper::create_padded_array, radio::SpiRange};
-use std::io::{Read, Write};
+use crate::helper::create_padded_array;
+use std::{io::{Read, Write}, time::Duration};
 
-pub enum CommandBytes {
-    WriteDmrFlash = 0x05,
-    EraseDmrFlash = 0x06,
-    EraseFwFlash = 0x39,
-    ReadSpiFlash = 0x52,
-    UnlockFwFlash = 0x55,  // Undocumented, assuming firmware block is read-only if not passed 
-    WriteFwFlash = 0x57
+const BAUD_RATE: u32 = 115_200;
+
+pub struct RadioPacket {
+    port: SerialPort,
+    buffer: Vec<u8>
 }
 
-fn append_checksum(command: &mut [u8], read_only: bool) {
-    let last_idx = command.len() - 1;
-    let mut sum: u8 = 0;
-    // Relies on arithmetic overflows
-    for byte in command.iter().take(last_idx) {
-        sum = sum.wrapping_add(*byte)
-    }
-    // If the buffer size is bigger than 132, it isn't an RT-890
-    // Both radios send 4-byte packets when reading SPI flash
-    if last_idx == 1027 || (last_idx != 131 && !read_only) {
-        command[last_idx] = sum.wrapping_add(72)
-    } else {
-        command[last_idx] = sum
-    }
-}
-
-fn verify_checksum(command: &[u8]) -> bool {
-    let last_idx = command.len() - 1;
-    let mut sum: u8 = 0;
-    // Relies on arithmetic overflows
-    for byte in command.iter().take(last_idx) {
-        sum = sum.wrapping_add(*byte)
-    }
-    // If the buffer size is bigger than 132, it isn't an RT-890
-    // Both radios send 4-byte packets when reading SPI flash
-    if last_idx != 3 && last_idx != 131 {
-        command[last_idx] == sum.wrapping_add(72)
-    } else {
-        command[last_idx] == sum
-    }
-}
-
-pub fn command_erasemcuflash_890(mut port: &SerialPort) -> Result<bool> {
-    let command = [
-        CommandBytes::EraseFwFlash as u8,
-        0,
-        0,
-        CommandBytes::UnlockFwFlash as u8,
-        0x8E // Calculated sum of command bytes
-    ];
-    port.write_all(&command)?;
-
-    let mut response = [0u8];
-    port.read_exact(&mut response)?;
-    match response {
-        [0x06] => Ok(true),
-        _ => Ok(false)
-    }
-}
-
-pub fn command_erasemcuflash_4d(mut port: &SerialPort) -> Result<bool> {
-    for block in 0x10..=0x55 {
-        let mut command = [
-            CommandBytes::EraseFwFlash as u8,
-            0x33,
-            0x05,
-            block,
-            0 // Calculated sum of command bytes
-        ];
-        append_checksum(&mut command, false);
-        port.write_all(&command)?;
-
-        let mut response = [0u8];
-        port.read_exact(&mut response)?;
-        match response {
-            [0x06] => continue,
-            _ => return Ok(false)
+impl RadioPacket {
+    pub fn new(port_name: &str, is_890: bool) -> Self {
+        Self {
+            port: SerialPort::builder()
+                .baud_rate(BAUD_RATE)
+                .read_timeout(Some(Duration::from_secs(25)))
+                .open(port_name)
+                .expect("Failed to open port. Ensure the radio is firmly connected."),
+            buffer: if is_890 {
+                create_padded_array(132)
+            } else {
+                create_padded_array(1028)
+            }
         }
     }
 
-    Ok(true)
-}
+    pub fn set_command(&mut self, command: u8) {
+        self.buffer[0] = command
+    }
 
-pub fn command_writemcuflash(mut port: &SerialPort, offset: usize, fw: &[u8], chunk_length: usize) -> Result<bool> {
-    // RT-890 has a command buffer of size 132, RT-4D has one of size 1028 (4 + CHUNK_LENGTH)
-    let mut command = create_padded_array(4+chunk_length);
-    command[0] = CommandBytes::WriteFwFlash as u8;
-    command[1] = ((offset >> 8) & 0xFF) as u8;
-    command[2] = ((offset) & 0xFF) as u8;
-    command[3..3+chunk_length].copy_from_slice(&fw[offset..offset+chunk_length]);
+    fn append_checksum(&mut self, initial_seed: u8, sum_index: usize) {
+        let mut sum = initial_seed;
+        // Relies on arithmetic overflows
+        for &byte in &self.buffer[..sum_index] {
+            sum = sum.wrapping_add(byte)
+        }
+        self.buffer[sum_index] = sum
+    }
 
-    // last command[] index reserved for checksum
-    append_checksum(&mut command, false);
-    port.write_all(&command)?;
+    fn verify_checksum(&self, initial_seed: u8, sum_index: usize) -> bool {
+        let mut sum = initial_seed;
+        // Relies on arithmetic overflows
+        for &byte in &self.buffer[..sum_index] {
+            sum = sum.wrapping_add(byte)
+        }
+        self.buffer[sum_index] == sum
+    }
 
-    let mut response = [0u8];
-    port.read_exact(&mut response)?;
-    match response {
-        [0x06] => Ok(true),
-        _ => Ok(false)
+    pub fn erase_mcu_flash_890(&mut self) -> Result<bool> {
+        // Undocumented, assuming firmware block is read-only if not passed 
+        self.buffer[3] = 0x55;
+        // last index reserved for checksum
+        self.append_checksum(0, 4);
+        self.port.write_all(&self.buffer[..5])?;
+
+        let mut response = [0u8];
+        self.port.read_exact(&mut response)?;
+        match response {
+            [0x06] => Ok(true),
+            _ => Ok(false)
+        }
+    }
+
+    pub fn erase_mcu_flash_4d(&mut self) -> Result<bool> {
+        for block in 0x10..=0x55 {
+            self.buffer[1] = 0x33;
+            self.buffer[2] = 0x05;
+            self.buffer[3] = block;
+            // last index reserved for checksum
+            self.append_checksum(72, 4);
+            self.port.write_all(&self.buffer[..5])?;
+    
+            let mut response = [0u8];
+            self.port.read_exact(&mut response)?;
+            match response {
+                [0x06] => continue,
+                _ => return Ok(false)
+            }
+        }
+    
+        Ok(true)
+    }
+
+    pub fn write_mcu_flash(&mut self, offset: usize, fw_data: &[u8]) -> Result<bool> {
+        let chunk_length = fw_data.len() + 3;
+        
+        self.buffer[1] = ((offset >> 8) & 0xFF) as u8;
+        self.buffer[2] = ((offset) & 0xFF) as u8;
+        self.buffer[3..chunk_length].copy_from_slice(fw_data);
+        // last index reserved for checksum
+        if chunk_length == 131 {
+            self.append_checksum(0, chunk_length);
+        } else {
+            self.append_checksum(72, chunk_length);
+        }
+        self.port.write_all(&self.buffer)?;
+    
+        let mut response = [0u8];
+        self.port.read_exact(&mut response)?;
+        match response {
+            [0x06] => Ok(true),
+            _ => Ok(false)
+        }
+    }
+
+    pub fn read_spi_flash(&mut self, offset: usize) -> Result<Option<Vec<u8>>> {
+        self.buffer[1] = ((offset >> 8) & 0xFF) as u8;
+        self.buffer[2] = (offset & 0xFF) as u8;
+        // last index reserved for checksum
+        self.append_checksum(0, 3);
+        self.port.write_all(&self.buffer[..4])?;
+
+        self.port.read_exact(&mut self.buffer)?;
+        // Returns the number of elements
+        // 132 for the RT-890, 1028 for the RT-4D
+        let sum_index = self.buffer.len();
+        if self.verify_checksum(0, sum_index) {
+            let data = self.buffer[3..sum_index].to_vec();
+            return Ok(Some(data))
+        }
+
+        Ok(None)
+    }
+
+    pub fn write_spi_flash(&mut self, offset: usize, spi_offset: usize, spi_data: &[u8]) -> Result<bool> {
+        let chunk_length = spi_data.len() + 3;
+        let block_offset = (offset - spi_offset) / chunk_length;
+
+        self.buffer[1] = ((block_offset >> 8) & 0xFF) as u8;
+        self.buffer[2] = (block_offset & 0xFF) as u8;
+        self.buffer[3..chunk_length].copy_from_slice(spi_data);
+        // last index reserved for checksum
+        self.append_checksum(0, chunk_length);
+        self.port.write_all(&self.buffer)?;
+    
+        let mut response = [0u8];
+        self.port.read_exact(&mut response)?;
+        match response {
+            [0x06] => Ok(true),
+            _ => Ok(false)
+        }
     }
 }
 
-pub fn command_initdmrflash(mut port: &SerialPort) -> Result<bool> {
-    // Unlike radio firmware updates, the RT-4D has to be intercepted
-    // while it is entering DMR flash mode
-    let command = [
-        1,
-        224,
-        252,
-        1,
-        0
-    ];
-    port.write_all(&command)?;
-
-    let mut response = [0u8; 80];
-    let _bytes_read = port.read(&mut response)?;
-    match response[4] {
-        224 => Ok(true),
-        _ => Ok(false)
-    }
+pub struct DmrPacket {
+    port: SerialPort,
+    buffer: [u8; 4108]
 }
 
-pub fn command_erasedmrflash(mut port: &SerialPort, flash_addr: usize) -> Result<bool> {
-    let command = [
-        1,
-        224,
-        252,
-        255,
-        244,
-        CommandBytes::EraseDmrFlash as u8,
-        0,
-        15,
-        (flash_addr & 0xFF) as u8,
-        ((flash_addr >> 8) & 0xFF) as u8,
-        ((flash_addr >> 16) & 0xFF) as u8,
-        ((flash_addr >> 24) & 0xFF) as u8,
-        0
-    ];
-
-    match port.write_all(&command) {
-        Ok(()) => Ok(true),
-        _ => Ok(false)
-    }
-}
-
-pub fn command_writedmrflash(mut port: &SerialPort, flash_offset: usize, fw: &[u8], file_offset: usize) -> Result<bool> {
-    let mut command = [0u8; 4108];
-    command[0] = 1;
-    command[1] = 224;
-    command[2] = 252;
-    command[3] = 255;
-    command[4] = 244;
-    command[5] = CommandBytes::WriteDmrFlash as u8;
-    command[6] = 16;
-    command[7] = 7;
-    command[8] = 0;
-    command[9] = (flash_offset & 0xFF) as u8;
-    command[10] = ((flash_offset >> 8) & 0xFF) as u8;
-    command[11] = 0;
-    command[12..4108].copy_from_slice(&fw[file_offset..file_offset+4096]); // CHUNK_LENGTH on RT-4D
-
-    match port.write_all(&command) {
-        Ok(()) => Ok(true),
-        _ => Ok(false)
-    }
-}
-
-pub fn command_readspiflash(mut port: &SerialPort, offset: usize) -> Result<Option<Vec<u8>>> {
-    let mut command = [0u8; 4];
-    command[0] = CommandBytes::ReadSpiFlash as u8;
-    command[1] = ((offset >> 8) & 0xFF) as u8;
-    command[2] = (offset & 0xFF) as u8;
-
-    append_checksum(&mut command, true);
-    port.write_all(&command)?;
-
-    let mut response = create_padded_array(1028);
-    port.read_exact(&mut response)?;
-    if !verify_checksum(&response) {
-        // Probably an RT-890, saves us duplicating code
-        response = create_padded_array(132);
-        port.read_exact(&mut response)?;
+impl DmrPacket {
+    pub fn new(port_name: &str) -> Self {
+        Self {
+            // 10ms as per original updater code
+            port: SerialPort::builder()
+                .baud_rate(BAUD_RATE)
+                .read_timeout(Some(Duration::from_millis(10)))
+                .open(port_name)
+                .expect("Failed to open port. Ensure the radio is firmly connected."),
+            buffer: [0u8; 4108]
+        }
     }
 
-    if verify_checksum(&response) {
-        // last command[] index reserved for checksum
-        let eof_idx = response.len() - 2;
-        let data = response[3..eof_idx].to_vec();
-        return Ok(Some(data))
+    pub fn set_command(&mut self, command: u8) {
+        self.buffer[5] = command
     }
-    Ok(None)
-}
 
-pub fn command_writespiflash(mut port: &SerialPort, spi_range: &SpiRange, offset: usize, spi: &[u8]) -> Result<bool> {
-    // TODO: Update to support RT-4D once relevant SPI ranges are published
-    let block_offset = (offset - spi_range.offset) / 128;
+    pub fn init_dmr_flash(&mut self) -> Result<bool> {
+        // Unlike radio firmware updates, the RT-4D has to be intercepted
+        // while it is entering DMR flash mode
+        self.buffer[0] = 1;
+        self.buffer[1] = 224;
+        self.buffer[2] = 252;
+        self.buffer[3] = 1;
+        self.port.write_all(&self.buffer[..5])?;
 
-    let mut command = [0u8; 132];
-    command[0] = spi_range.cmd;
-    command[1] = ((block_offset >> 8) & 0xFF) as u8;
-    command[2] = (block_offset & 0xFF) as u8;
-    command[3..130].copy_from_slice(&spi[offset..offset+128]); // CHUNK_LENGTH on RT-890
+        let mut response = [0u8; 5];
+        let _bytes_read = self.port.read(&mut response)?;
+        match response[4] {
+            224 => Ok(true),
+            _ => Ok(false)
+        }
+    }
 
-    // last command[] index reserved for checksum
-    append_checksum(&mut command, false);
-    port.write_all(&command)?;
+    pub fn erase_dmr_flash(&mut self, offset: usize) -> Result<bool> {
+        self.buffer[3] = 255;
+        self.buffer[4] = 244;
+        self.buffer[7] = 15;
+        self.buffer[8] = (offset & 0xFF) as u8;
+        self.buffer[9] = ((offset >> 8) & 0xFF) as u8;
+        self.buffer[10] = ((offset >> 16) & 0xFF) as u8;
+        self.buffer[11] = ((offset >> 24) & 0xFF) as u8;
 
-    let mut response = [0u8];
-    port.read_exact(&mut response)?;
-    match response {
-        [0x06] => Ok(true),
-        _ => Ok(false)
+        match self.port.write_all(&self.buffer[..12]) {
+            Ok(()) => Ok(true),
+            _ => Ok(false)
+        }
+    }
+
+    pub fn write_dmr_flash(&mut self, offset: usize, fw_data: &[u8]) -> Result<bool> {
+        self.buffer[4] = 244;
+        self.buffer[6] = 16;
+        self.buffer[7] = 7;
+        self.buffer[8] = 0;
+        self.buffer[9] = (offset & 0xFF) as u8;
+        self.buffer[10] = ((offset >> 8) & 0xFF) as u8;
+        self.buffer[11] = 0;
+        self.buffer[12..4108].copy_from_slice(fw_data);
+
+        match self.port.write_all(&self.buffer) {
+            Ok(()) => Ok(true),
+            _ => Ok(false)
+        }
     }
 }

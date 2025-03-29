@@ -4,15 +4,11 @@ version = "1.2.95"
 edition = "2024"
 
 [profile.release]
-lto = true
+codegen-units = 4
+lto = "fat"
 opt-level = "z"
-strip = true
+panic = "abort"
+strip = "symbols"
 
 [dependencies]
-serialport5 = "5.0.*"
-
-[target.'cfg(unix)'.dependencies]
-nix = "0.23.2"
-
-[target.'cfg(windows)'.dependencies]
-is_elevated = "0.1.*"
+serialport5 = { version = "5.0.*", default-features = false }

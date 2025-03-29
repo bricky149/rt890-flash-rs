@@ -16,140 +16,119 @@
 */
 
 mod helper;
-mod platform;
 mod radio;
 mod uart;
 
+use helper::has_serial_access;
 use radio::*;
-use std::env::args;
+use std::env::{self, args};
 
-const HEADER: &str = "rt890-flash - Copyright 2024-2025 bricky149";
-const USAGE: &str = "Flashing and dumping tool for the Radtel RT-890.
-
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const COPYRIGHT: &str = "Copyright 2024-2025 bricky149 and contributors";
+const HELP: &str = "Usage:
 rt890-flash -l
-rt890-flash -p PORT -d FILE
-rt890-flash -p PORT -f FILE
-rt890-flash -p PORT -ff FILE
-rt890-flash -p PORT -fdmr FILE
-rt890-flash -p PORT -r [-c] FILE
+rt890-flash -890 -p PORT -fw PATH
+rt890-flash -4d -p PORT -fw/-dmr PATH
+rt890-flash -890/-4d -p PORT -o/-w PATH
 
 -l
-List available ports, e.g. /dev/ttyUSB0
+List available ports that can be used.
 
 -p PORT
-Port to read from or write to.
+Port to dump from or flash to.
 
--d FILE
-Dump external SPI flash to file, e.g. spi_backup.bin
-Radio MUST be in normal mode.
-
--f FILE
-Write radio firmware file to MCU flash, e.g. firmware.bin
+-fw PATH
+Flash radio with specified firmware file.
 Radio MUST be in flash mode and will automatically restart.
 
--ff FILE
-Same as -f but disables file size check. Useful for flashing RT-4D.
-Radio MUST be in flash mode and will automatically restart.
-
--fdmr FILE
-Write DMR firmware file to MCU flash, e.g. firmware.bin
+-dmr PATH
+Flash DMR chip with specified firmware file.
 Radio MUST be in DMR update mode and be manually restarted.
 
--r [-c] FILE
-Write flash dump to external SPI flash, e.g. spi_backup.bin
-If -c is specified, only calibration data will be written.
-Radio MUST be in normal mode and be manually restarted.
-";
+-o PATH
+Dump radio SPI flash to new file.
+Radio MUST be in normal mode.
+
+-w PATH
+Restore specified dump file to radio SPI flash.
+Radio MUST be in normal mode and be manually restarted.";
 
 fn main() {
-    // Always display header text
-    println!("{}", HEADER);
-
     let args: Vec<String> = args().collect();
     match args.len() {
         2 => { // Executable name with one argument
-            if args[1] != "-l" {
-                println!("{}", USAGE);
-                return
-            }
-
-            println!("Ports available:");
-            for p in get_available_ports() {
-                println!("\t{}", p.port_name)
+            match args[1].as_str() {
+                "-l" => {
+                    println!("Ports available:");
+                    for p in get_available_ports() {
+                        println!("\t{}", p.port_name)
+                    }
+                },
+                "--version" => {
+                    println!("rt890-flash {}", VERSION);
+                    println!("{}", COPYRIGHT)
+                },
+                _ => println!("{}", HELP)
             }
         }
-        5..=6 => { // Executable name with four or five arguments
-            if args[1] != "-p" {
-                println!("{}", USAGE);
+        6..=7 => { // Executable name with at least five arguments
+            #[cfg(unix)]
+            let user = env::var("USER").expect("Unable to get current user");
+            #[cfg(unix)]
+            if user != "root" && !has_serial_access(&user) {
+                println!("Please add the current user to the dialout group or run the program as root");
                 return
             }
 
-            if !platform::runas_admin() {
-                println!("You must run this executable as root (Linux) or admin (Windows)");
+            let is_890 = if args[1] == "-890" {
+                true
+            } else if args[1] == "-4d" || args[1] == "-4D" {
+                // .to_uppercase and .to_lowercase adds 13kB of bloat
+                false
+            } else {
+                println!("Please specify radio model");
+                println!("{}", HELP);
                 return
-            }
+            };
 
-            match args[3].as_str() {
-                "-d" => {
-                    if args[4] != "-c" {
-                        dump_spi_flash(&args[2], &args[4]);
-                        println!("\nSPI flash dump complete")
-                    } else {
-                        // Cannot specify -c here
-                        println!("{}", USAGE)
+            match args[4].as_str() {
+                "-fw" => {
+                    match flash_mcu_firmware(&args[3], &args[5], is_890) {
+                        Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
+                        Ok(false) => println!("Failed to flash radio firmware"),
+                        Err(e) => println!("{}. Ensure the radio is firmly connected and in flash mode.", e.description)
                     }
                 }
-                "-f" => {
-                    if args[4] != "-c" {
-                        match flash_mcu_firmware(&args[2], &args[4], true) {
-                            Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
-                            _ => println!("Specified file is not exactly {} bytes", FW_890_SIZE)
-                        }
-                    } else {
-                        // Cannot specify -c here
-                        println!("{}", USAGE)
+                "-dmr" => {
+                    if is_890 {
+                        println!("The RT-890 does not have DMR firmware!");
+                        return
+                    }
+                    match flash_dmr_firmware(&args[3], &args[5]) {
+                        Ok(true) => println!("\nDMR firmware flash complete. Reboot the radio now."),
+                        Ok(false) => println!("Failed to flash DMR firmware"),
+                        Err(e) => println!("{}. Ensure the radio is firmly connected and in DMR update mode.", e.description)
                     }
                 }
-                "-ff" => {
-                    if args[4] != "-c" {
-                        match flash_mcu_firmware(&args[2], &args[4], false) {
-                            Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
-                            _ => println!("Invalid file given")
-                        }
-                    } else {
-                        // Cannot specify -c here
-                        println!("{}", USAGE)
+                "-o" => {
+                    match dump_spi_flash(&args[3], &args[5], is_890) {
+                        Ok(true) => println!("\nSPI flash dump complete"),
+                        Ok(false) => println!("Failed to read SPI flash"),
+                        Err(e) => println!("{}. Ensure the radio is firmly connected and turned on.", e.description)
                     }
                 }
-                "-fdmr" => {
-                    if args[4] != "-c" {
-                        match flash_dmr_firmware(&args[2], &args[4]) {
-                            Ok(true) => println!("\nDMR firmware flash complete. Reboot the radio now."),
-                            _ => println!("Invalid file given")
-                        }
-                    } else {
-                        // Cannot specify -c here
-                        println!("{}", USAGE)
-                    }
-                }
-                "-r" => {
-                    if args[4] != "-c" {
-                        match restore_spi_flash(&args[2], false, &args[4]) {
-                            Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
-                            _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
-                        }
-                    } else {
-                        match restore_spi_flash(&args[2], true, &args[5]) {
-                            Ok(true) => println!("\nCalibration restore complete. Reboot the radio now."),
-                            _ => println!("Specified file is not exactly {} bytes", SPI_FLASH_SIZE)
-                        }
+                "-w" => {
+                    match restore_spi_flash(&args[3], &args[5], is_890) {
+                        Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
+                        Ok(false) => println!("Failed to write SPI flash"),
+                        Err(e) => println!("{}. Ensure the radio is firmly connected and turned on.", e.description)
                     }
                 }
                 _ => {
-                    println!("{}", USAGE);
+                    println!("{}", HELP)
                 }
             }
         }
-        _ => println!("{}", USAGE)
+        _ => println!("{}", HELP)
     }
 }
