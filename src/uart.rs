@@ -19,7 +19,7 @@ extern crate serialport5;
 use self::serialport5::*;
 
 use crate::helper::create_padded_array;
-use std::{io::{Read, Write}, time::Duration};
+use std::{io::{Read, Write}, process::exit, time::Duration};
 
 const BAUD_RATE: u32 = 115_200;
 
@@ -35,7 +35,10 @@ impl RadioPacket {
                 .baud_rate(BAUD_RATE)
                 .read_timeout(Some(Duration::from_secs(25)))
                 .open(port_name)
-                .expect("Failed to open port. Ensure the radio is firmly connected."),
+                .unwrap_or_else(|e| {
+                    eprintln!("{}", e.description);
+                    exit(0)
+                }),
             buffer: if is_890 {
                 create_padded_array(132)
             } else {
@@ -117,8 +120,9 @@ impl RadioPacket {
         self.port.read_exact(&mut self.buffer)?;
         // Returns the number of elements
         // 132 for the RT-890, 1028 for the RT-4D
-        let sum_index = self.buffer.len();
+        let sum_index = self.buffer.len() - 1;
         if self.verify_checksum(0, sum_index) {
+            // Exclude checksum as it is not part of the data
             let data = self.buffer[3..sum_index].to_vec();
             return Ok(Some(data))
         }
@@ -159,7 +163,10 @@ impl DmrPacket {
                 .baud_rate(BAUD_RATE)
                 .read_timeout(Some(Duration::from_millis(10)))
                 .open(port_name)
-                .expect("Failed to open port. Ensure the radio is firmly connected."),
+                .unwrap_or_else(|e| {
+                    eprintln!("{}", e.description);
+                    exit(0)
+                }),
             buffer: [0u8; 4108]
         }
     }

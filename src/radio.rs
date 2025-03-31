@@ -31,7 +31,7 @@ const SPI_890_OFFSETS: [SpiRange; 9] = [
     SpiRange { cmd: SpiFlags::ChinesePrompt as u8, offset: 3260416, size: 626688 },
     SpiRange { cmd: SpiFlags::StartupLogo as u8, offset: 3887104, size: 40960 },
     SpiRange { cmd: SpiFlags::Calibration as u8, offset: 3928064, size: 4096 },
-    SpiRange { cmd: SpiFlags::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Doesn't pick up extended settings
+    SpiRange { cmd: SpiFlags::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Does not pick up extended settings
     //SpiRange { cmd: SpiFlags::ExtendedSettings as u8, offset: 4018176, size: 40960 },  // 0x3D5
     SpiRange { cmd: SpiFlags::UnknownBlock as u8, offset: 4030464, size: 40960 }         // 0x3D8, possibly a bug as misses settings above
 ];
@@ -103,10 +103,7 @@ pub struct SpiRange {
 pub fn dump_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<bool> {
     let mut spi = match helper::create_file(file_path) {
         Some(f) => f,
-        _ => {
-            println!("Unable to create dump file");
-            return Ok(false)
-        }
+        _ => return Ok(false)
     };
 
     let mut request = RadioPacket::new(port_name, is_890);
@@ -135,10 +132,7 @@ pub fn dump_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<
 pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<bool> {
     let spi = match helper::read_file_checked(file_path, SPI_FLASH_SIZE) {
         Some(f) => f,
-        _ => {
-            println!("Specified file exceeds SPI flash size");
-            return Ok(false)
-        }
+        _ => return Ok(false)
     };
 
     let chunk_size = if is_890 {
@@ -181,18 +175,16 @@ pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Res
         firmware_size = FW_890_SIZE;
         match helper::read_file_checked(file_path, firmware_size) {
             Some(f) => f,
-            _ => {
-                println!("Specified file is not exactly {} bytes", FW_890_SIZE);
-                return Ok(false)
-            }
+            _ => return Ok(false)
         }
     } else {
         chunk_length = 1024;
         firmware_size = FW_4D_FLASH_SIZE;
         match helper::read_file_padded(file_path, firmware_size) {
             Ok(f) => f,
-            _ => {
-                println!("Specified file exceeds radio firmware flash size");
+            Err(e) => {
+                // Print here as we cannot propagate up without casting
+                eprintln!("{}", e);
                 return Ok(false)
             }
         }
@@ -222,10 +214,7 @@ pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Res
 pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
     let fw = match helper::read_file_checked(file_path, DMR_FW_4D_SIZE) {
         Some(f) => f,
-        _ => {
-            println!("Specified file is not exactly {} bytes", DMR_FW_4D_SIZE);
-            return Ok(false)
-        }
+        _ => return Ok(false)
     };
 
     // Wait for the radio to connect so we can intercept it
@@ -263,5 +252,5 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
 }
 
 pub fn get_available_ports() -> Vec<SerialPortInfo> {
-    serialport5::available_ports().expect("No ports found")
+    serialport5::available_ports().unwrap_or_default()
 }

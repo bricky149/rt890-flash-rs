@@ -19,15 +19,20 @@ use std::{fs::{self, File}, io::{self, Read}};
 
 #[cfg(unix)]
 pub fn has_serial_access(user: &str) -> bool {
-    let group_file = fs::read_to_string("/etc/group")
-        .expect("Unable to get available groups");
+    let group_file = fs::read_to_string("/etc/group").unwrap_or_default();
 
-    // Find the "dialout" group and check if the user is listed
-    group_file
-        .lines()
-        .find(|line| line.starts_with("dialout:"))
-        .map(|line| line.contains(user))
-        .unwrap_or(false)
+    for line in group_file.lines() {
+        if !line.starts_with("dialout:") {
+            continue
+        }
+        if line.contains(user) {
+            return true
+        } else {
+            return false
+        }
+    }
+
+    false
 }
 
 pub fn create_padded_array(size: usize) -> Vec<u8> {
@@ -43,11 +48,15 @@ pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
     match fs::read(path) {
         Ok(f) => {
             if expected_size != 0 && f.len() != expected_size {
+                println!("Specified file is not exactly {} bytes", expected_size);
                 return None
             }
             Some(f)
         },
-        Err(_e) => None
+        Err(e) => {
+            eprintln!("{}", e);
+            None
+        }
     }
 }
 
@@ -64,6 +73,9 @@ pub fn read_file_padded(file_path: &str, size: usize) -> io::Result<Vec<u8>> {
 pub fn create_file(path: &str) -> Option<File> {
     match File::create(path) {
         Ok(f) => Some(f),
-        Err(_e) => None
+        Err(e) => {
+            eprintln!("{}", e);
+            None
+        }
     }
 }

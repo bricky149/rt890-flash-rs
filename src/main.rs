@@ -19,7 +19,9 @@ mod helper;
 mod radio;
 mod uart;
 
+#[cfg(unix)]
 use helper::has_serial_access;
+
 use radio::*;
 use std::env::{self, args};
 
@@ -73,7 +75,7 @@ fn main() {
         }
         6..=7 => { // Executable name with at least five arguments
             #[cfg(unix)]
-            let user = env::var("USER").expect("Unable to get current user");
+            let user = env::var("USER").unwrap_or_default();
             #[cfg(unix)]
             if user != "root" && !has_serial_access(&user) {
                 println!("Please add the current user to the dialout group or run the program as root");
@@ -86,8 +88,7 @@ fn main() {
                 // .to_uppercase and .to_lowercase adds 13kB of bloat
                 false
             } else {
-                println!("Please specify radio model");
-                println!("{}", HELP);
+                println!("Please specify a radio model");
                 return
             };
 
@@ -96,7 +97,7 @@ fn main() {
                     match flash_mcu_firmware(&args[3], &args[5], is_890) {
                         Ok(true) => println!("\nRadio firmware flash complete. Radio should now reboot."),
                         Ok(false) => println!("Failed to flash radio firmware"),
-                        Err(e) => println!("{}. Ensure the radio is firmly connected and in flash mode.", e.description)
+                        Err(e) => eprintln!("{}. Ensure the radio is firmly connected and in flash mode.", e.description)
                     }
                 }
                 "-dmr" => {
@@ -107,25 +108,25 @@ fn main() {
                     match flash_dmr_firmware(&args[3], &args[5]) {
                         Ok(true) => println!("\nDMR firmware flash complete. Reboot the radio now."),
                         Ok(false) => println!("Failed to flash DMR firmware"),
-                        Err(e) => println!("{}. Ensure the radio is firmly connected and in DMR update mode.", e.description)
+                        Err(e) => eprintln!("{}. Ensure the radio is firmly connected and in DMR update mode.", e.description)
                     }
                 }
                 "-o" => {
                     match dump_spi_flash(&args[3], &args[5], is_890) {
                         Ok(true) => println!("\nSPI flash dump complete"),
                         Ok(false) => println!("Failed to read SPI flash"),
-                        Err(e) => println!("{}. Ensure the radio is firmly connected and turned on.", e.description)
+                        Err(e) => eprintln!("{}. Ensure the radio is firmly connected and turned on.", e.description)
                     }
                 }
                 "-w" => {
                     match restore_spi_flash(&args[3], &args[5], is_890) {
                         Ok(true) => println!("\nSPI flash restore complete. Reboot the radio now."),
                         Ok(false) => println!("Failed to write SPI flash"),
-                        Err(e) => println!("{}. Ensure the radio is firmly connected and turned on.", e.description)
+                        Err(e) => eprintln!("{}. Ensure the radio is firmly connected and turned on.", e.description)
                     }
                 }
                 _ => {
-                    println!("{}", HELP)
+                    println!("Please specify a valid command")
                 }
             }
         }
