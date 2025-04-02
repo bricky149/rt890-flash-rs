@@ -24,32 +24,45 @@ use std::io::Write;
 
 pub const FW_890_SIZE: usize = 60_416;
 const SPI_890_OFFSETS: [SpiRange; 9] = [
-    SpiRange { cmd: SpiFlags::EnglishPrompt as u8, offset: 0, size: 2949120 },
-    SpiRange { cmd: SpiFlags::EnglishAlphaNum as u8, offset: 2949120, size: 163840 },
-    SpiRange { cmd: SpiFlags::BigFont as u8, offset: 3112960, size: 139264 },
-    SpiRange { cmd: SpiFlags::SmallFont as u8, offset: 3252224, size: 8192 },
-    SpiRange { cmd: SpiFlags::ChinesePrompt as u8, offset: 3260416, size: 626688 },
-    SpiRange { cmd: SpiFlags::StartupLogo as u8, offset: 3887104, size: 40960 },
-    SpiRange { cmd: SpiFlags::Calibration as u8, offset: 3928064, size: 4096 },
-    SpiRange { cmd: SpiFlags::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Does not pick up extended settings
-    //SpiRange { cmd: SpiFlags::ExtendedSettings as u8, offset: 4018176, size: 40960 },  // 0x3D5
-    SpiRange { cmd: SpiFlags::UnknownBlock as u8, offset: 4030464, size: 40960 }         // 0x3D8, possibly a bug as misses settings above
+    SpiRange { cmd: SpiRegion890::EnglishPrompt as u8, offset: 0, size: 2949120 },
+    SpiRange { cmd: SpiRegion890::EnglishAlphaNum as u8, offset: 2949120, size: 163840 },
+    SpiRange { cmd: SpiRegion890::BigFont as u8, offset: 3112960, size: 139264 },
+    SpiRange { cmd: SpiRegion890::SmallFont as u8, offset: 3252224, size: 8192 },
+    SpiRange { cmd: SpiRegion890::ChinesePrompt as u8, offset: 3260416, size: 626688 },
+    SpiRange { cmd: SpiRegion890::StartupLogo as u8, offset: 3887104, size: 40960 },
+    SpiRange { cmd: SpiRegion890::Calibration as u8, offset: 3928064, size: 4096 },
+    SpiRange { cmd: SpiRegion890::MemoriesAndSettings as u8, offset: 3936256, size: 40960},  // Does not pick up extended settings
+    //SpiRange { cmd: SpiRegion890::ExtendedSettings as u8, offset: 4018176, size: 40960 },  // 0x3D5
+    SpiRange { cmd: SpiRegion890::UnknownBlock as u8, offset: 4030464, size: 40960 }         // 0x3D8, possibly a bug as misses settings above
 ];
 
 pub const DMR_FW_4D_SIZE: usize = 1_527_808;
 pub const SPI_FLASH_SIZE: usize = 4_194_304;
 
 const FW_4D_FLASH_SIZE: usize = 251_904;
-const SPI_4D_OFFSETS: [SpiRange; 9] = [
-    SpiRange { cmd: SpiFlags::Config as u8, offset: 0, size: 12288 },
-    SpiRange { cmd: SpiFlags::Channels as u8, offset: 16384, size: 49152 },
-    SpiRange { cmd: SpiFlags::Zones as u8, offset: 114688, size: 131072 },
-    SpiRange { cmd: SpiFlags::Contacts as u8, offset: 376832, size: 65536 },
-    SpiRange { cmd: SpiFlags::GroupLists as u8, offset: 507904, size: 12288 },
-    SpiRange { cmd: SpiFlags::Encryption as u8, offset: 532480, size: 12288 },
-    SpiRange { cmd: SpiFlags::SmsData as u8, offset: 606208, size: 204800 },
-    SpiRange { cmd: SpiFlags::FmTuner as u8, offset: 876544, size: 1024 },
-    SpiRange { cmd: SpiFlags::StartPic as u8, offset: 877568, size: 1024 }
+const SPI_4D_OFFSETS: [SpiRange; 22] = [
+    SpiRange { cmd: SpiRegion4D::Calibration as u8, offset: 0, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::Config as u8, offset: 8192, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::Channels as u8, offset: 16384, size: 49152 },
+    SpiRange { cmd: SpiRegion4D::Zones as u8, offset: 114688, size: 131072 },
+    SpiRange { cmd: SpiRegion4D::Contacts as u8, offset: 376832, size: 65536 },
+    SpiRange { cmd: SpiRegion4D::Groups as u8, offset: 507904, size: 12288 },
+    SpiRange { cmd: SpiRegion4D::EncryptKeys as u8, offset: 532480, size: 12288 },
+    SpiRange { cmd: SpiRegion4D::CallLog as u8, offset: 557056, size: 49152 },
+    SpiRange { cmd: SpiRegion4D::Sms as u8, offset: 606208, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::Schedules as u8, offset: 811008, size: 8192 },
+    SpiRange { cmd: SpiRegion4D::FmTuner as u8, offset: 876544, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::StartupLogo as u8, offset: 877568, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::UnknownBlock1 as u8, offset: 1204224, size: 4096 },
+    SpiRange { cmd: SpiRegion4D::UTF16MapTable as u8, offset: 1359872, size: 98304 },
+    SpiRange { cmd: SpiRegion4D::ChinesePhonetics as u8, offset: 1458176, size: 147456 },
+    SpiRange { cmd: SpiRegion4D::UnknownBlock2 as u8, offset: 1605632, size: 65536 },
+    SpiRange { cmd: SpiRegion4D::UnknownBlock3 as u8, offset: 1671168, size: 16384 },
+    SpiRange { cmd: SpiRegion4D::SevenBySixFonts as u8, offset: 1687552, size: 8192 },
+    SpiRange { cmd: SpiRegion4D::MiscFonts as u8, offset: 1695744, size: 737280 },
+    SpiRange { cmd: SpiRegion4D::UnknownBlock4 as u8, offset: 3420160, size: 61440 },
+    SpiRange { cmd: SpiRegion4D::VoicePrompts as u8, offset: 3481600, size: 712704 },
+    SpiRange { cmd: SpiRegion4D::AddressBook as u8, offset: 4194304, size: 12582912 }
 ];
 const DMR_FW_4D_OFFSETS: [usize; 43] = [
     17825824, 18874400, 19922976, 20971552, 22020128, 23068704, 24117280, 25165856, 26214432, 27263008,
@@ -65,14 +78,7 @@ enum RadioCommand {
     WriteFwFlash = 0x57
 }
 
-enum DmrCommand {
-    InitFlash = 0x00,
-    WriteFlash = 0x05,
-    EraseFlash = 0x06
-}
-
-pub enum SpiFlags {
-    // RT-890
+pub enum SpiRegion890 {
     EnglishPrompt = 0x40,
     EnglishAlphaNum = 0x41,
     BigFont = 0x42,
@@ -81,19 +87,35 @@ pub enum SpiFlags {
     Calibration = 0x48,
     MemoriesAndSettings = 0x49,
     UnknownBlock = 0x4B,         // Extended settings?
-    ChinesePrompt = 0x4C,
-    // RT-4D
+    ChinesePrompt = 0x4C
+}
+
+pub enum SpiRegion4D {
+    Calibration = 0x40,
     Config = 0x90,
     Channels = 0x91,
     Zones = 0x92,
     Contacts = 0x93,
-    GroupLists = 0x94,
-    Encryption = 0x95,
-    SmsData = 0x97,
+    Groups = 0x94,
+    EncryptKeys = 0x95,
+    CallLog = 0x96,
+    Sms = 0x97,
+    Schedules = 0x98,
     FmTuner = 0x99,
-    StartPic = 0x9A
+    StartupLogo = 0x9A,
+    UnknownBlock1 = 0x9B,
+    UTF16MapTable = 0x9C,
+    ChinesePhonetics = 0x9D,
+    UnknownBlock2 = 0x9E,
+    UnknownBlock3 = 0x9F,
+    SevenBySixFonts = 0xA0,
+    MiscFonts = 0xA1,
+    UnknownBlock4 = 0xA2,
+    VoicePrompts = 0xA3,
+    AddressBook = 0xA4
 }
 
+#[derive(Clone)]
 pub struct SpiRange {
     pub cmd: u8,
     pub offset: usize,
@@ -118,10 +140,10 @@ pub fn dump_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<
     for offset in 0..max_offset {
         match request.read_spi_flash(offset) {
             Ok(Some(data)) => {
-                print!("\rDumping SPI flash from address {:#06x}", offset);
+                print!("\rDumping SPI flash from address {:#x}", offset);
                 spi.write_all(&data)?
             }
-            Ok(None) => println!("Failed to dump from address {:#06x}", offset),
+            Ok(None) => println!("Failed to dump from address {:#x}", offset),
             Err(e) => return Err(e)
         }
     }
@@ -141,9 +163,9 @@ pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Resu
         1024
     };
     let spi_offsets = if is_890 {
-        SPI_890_OFFSETS
+        SPI_890_OFFSETS.to_vec()
     } else {
-        SPI_4D_OFFSETS
+        SPI_4D_OFFSETS.to_vec()
     };
     let mut request = RadioPacket::new(port_name, is_890);
 
@@ -155,8 +177,8 @@ pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Resu
         while offset < block_length {
             let spi_data = &spi[offset..offset+chunk_size];
             match request.write_spi_flash(offset, spi_range.offset, spi_data) {
-                Ok(true) => print!("\rRestoring SPI flash to address {:#08x}", offset),
-                Ok(false) => println!("Failed to restore to address {:#06x}", offset),
+                Ok(true) => print!("\rRestoring SPI flash to address {:#x}", offset),
+                Ok(false) => println!("Failed to restore to address {:#x}", offset),
                 Err(e) => return Err(e)
             }
             offset += chunk_size
@@ -202,7 +224,7 @@ pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Res
     while offset < firmware_size {
         let fw_data = &fw[offset..offset+chunk_length];
         match request.write_mcu_flash(offset, fw_data) {
-            Ok(true) => print!("\rFlashing radio firmware to address {:#06x}", offset),
+            Ok(true) => print!("\rFlashing radio firmware to address {:#x}", offset),
             _ => return Ok(false)
         }
         offset += chunk_length
@@ -216,11 +238,12 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
         Some(f) => f,
         _ => return Ok(false)
     };
+    let fw_crc = helper::calculate_crc(&fw[..]);
+    println!("File CRC: {:#x}", fw_crc);
 
     // Wait for the radio to connect so we can intercept it
     // We cannot flash DMR firmware without doing this first
     let mut request = DmrPacket::new(port_name);
-    request.set_command(DmrCommand::InitFlash as u8);
     loop {
         match request.init_dmr_flash() {
             Ok(true) => break,
@@ -228,7 +251,6 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
         }
     }
 
-    request.set_command(DmrCommand::EraseFlash as u8);
     for erase_offset in DMR_FW_4D_OFFSETS {
         match request.erase_dmr_flash(erase_offset) {
             Ok(true) => print!("\rErasing DMR firmware flash"),
@@ -236,7 +258,6 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
         }
     }
 
-    request.set_command(DmrCommand::WriteFlash as u8);
     let mut file_offset = 0;
     for block in 0..373 {
         let page_offset = 272 + block * 16;
@@ -247,7 +268,14 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
         }
         file_offset += 4096
     }
+    request.deinit_dmr_flash()?;
 
+    let crc = request.get_dmr_crc();
+    if crc - fw_crc != 0 {
+        println!();
+        println!("Checksum mismatch: got {:#x} from radio", crc);
+        return Ok(false)
+    }
     Ok(true)
 }
 

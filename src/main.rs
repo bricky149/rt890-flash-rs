@@ -56,6 +56,9 @@ Restore specified dump file to radio SPI flash.
 Radio MUST be in normal mode and be manually restarted.";
 
 fn main() {
+    // Always print so the user knows we are running
+    println!("{}", COPYRIGHT);
+
     let args: Vec<String> = args().collect();
     match args.len() {
         2 => { // Executable name with one argument
@@ -65,11 +68,8 @@ fn main() {
                     for p in get_available_ports() {
                         println!("\t{}", p.port_name)
                     }
-                },
-                "--version" => {
-                    println!("rt890-flash {}", VERSION);
-                    println!("{}", COPYRIGHT)
-                },
+                }
+                "--version" => println!("rt890-flash {}", VERSION),
                 _ => println!("{}", HELP)
             }
         }

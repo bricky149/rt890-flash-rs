@@ -66,7 +66,7 @@ impl RadioPacket {
         for &byte in &self.buffer[..sum_index] {
             sum = sum.wrapping_add(byte)
         }
-        self.buffer[sum_index] == sum
+        self.buffer[sum_index] & sum == 0
     }
 
     pub fn erase_mcu_flash(&mut self, is_890: bool) -> Result<bool> {
@@ -171,10 +171,6 @@ impl DmrPacket {
         }
     }
 
-    pub fn set_command(&mut self, command: u8) {
-        self.buffer[5] = command
-    }
-
     pub fn init_dmr_flash(&mut self) -> Result<bool> {
         // Unlike radio firmware updates, the RT-4D has to be intercepted
         // while it is entering DMR flash mode
@@ -184,31 +180,34 @@ impl DmrPacket {
         self.buffer[3] = 1;
         self.port.write_all(&self.buffer[..5])?;
 
-        let mut response = [0u8; 5];
-        let _bytes_read = self.port.read(&mut response)?;
-        match response[4] {
-            224 => Ok(true),
-            _ => Ok(false)
+        let mut response = [0u8; 8];
+        self.port.read_exact(&mut response)?;
+        // Reduce false positives by checking the response
+        if response[2..8] == [5, 1, 224, 252, 1, 0] {
+            // Ready to flash
+            return Ok(true)
         }
+        Ok(false)
     }
 
     pub fn erase_dmr_flash(&mut self, offset: usize) -> Result<bool> {
         self.buffer[3] = 255;
         self.buffer[4] = 244;
+        self.buffer[5] = 6;
         self.buffer[7] = 15;
         self.buffer[8] = (offset & 0xFF) as u8;
         self.buffer[9] = ((offset >> 8) & 0xFF) as u8;
         self.buffer[10] = ((offset >> 16) & 0xFF) as u8;
         self.buffer[11] = ((offset >> 24) & 0xFF) as u8;
 
-        match self.port.write_all(&self.buffer[..12]) {
+        match self.port.write_all(&self.buffer[..13]) {
             Ok(()) => Ok(true),
             _ => Ok(false)
         }
     }
 
     pub fn write_dmr_flash(&mut self, offset: usize, fw_data: &[u8]) -> Result<bool> {
-        self.buffer[4] = 244;
+        self.buffer[5] = 5;
         self.buffer[6] = 16;
         self.buffer[7] = 7;
         self.buffer[8] = 0;
@@ -220,6 +219,45 @@ impl DmrPacket {
         match self.port.write_all(&self.buffer) {
             Ok(()) => Ok(true),
             _ => Ok(false)
+        }
+    }
+
+    pub fn deinit_dmr_flash(&mut self) -> Result<bool> {
+        // Required so we can query for a checksum
+        self.buffer[3] = 9;
+        self.buffer[4] = 16;
+        self.buffer[5] = 0;
+        self.buffer[7] = 1;
+        self.buffer[9] = 255;
+        self.buffer[10] = 95;
+        self.buffer[11] = 24;
+        self.buffer[12] = 0;
+
+        match self.port.write_all(&self.buffer[..13]) {
+            Ok(()) => Ok(true),
+            _ => Ok(false)
+        }
+    }
+
+    pub fn get_dmr_crc(&mut self) -> u32 {
+        let mut response = [0u8; 11];
+        loop {
+            match self.port.read_exact(&mut response) {
+                Ok(()) => {
+                    if response[..4] != [4, 14, 8, 1] {
+                        // Not a checksum packet
+                        continue
+                    }
+                    let sum1 = response[7] as u32;
+                    let sum2 = response[8] as u32;
+                    let sum3 = response[9] as u32;
+                    let sum4 = response[10] as u32;
+                    let composite = sum1 | sum2 << 8 | sum3 << 16 | sum4 << 24;
+        
+                    return composite
+                }
+                _ => continue // Keep going until we get a valid response
+            }
         }
     }
 }
