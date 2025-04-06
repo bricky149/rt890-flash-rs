@@ -97,7 +97,11 @@ pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
             Some(f)
         }
         Err(e) => {
+            #[cfg(unix)]
             eprintln!("{}", e);
+            #[cfg(windows)]
+            println!("{}", e);
+
             None
         }
     }
@@ -117,7 +121,11 @@ pub fn create_file(path: &str) -> Option<File> {
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(f) => Some(f),
         Err(e) => {
+            #[cfg(unix)]
             eprintln!("{}", e);
+            #[cfg(windows)]
+            println!("{}", e);
+            
             None
         }
     }
@@ -130,7 +138,7 @@ pub fn calculate_crc(data: &[u8]) -> u32 {
         let idx = ((x ^ z) & 0xFF) as usize;
         x = (x >> 8) ^ CRC32C_TABLE[idx]
     }
-    return x
+    x
 }
 
 // pub fn init_crc() {

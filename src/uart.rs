@@ -19,7 +19,10 @@ extern crate serialport5;
 use self::serialport5::*;
 
 use crate::helper::create_padded_array;
-use std::{io::{Read, Write}, process::exit, time::Duration};
+use std::io::{Read, Write};
+use std::process::exit;
+use std::thread::sleep;
+use std::time::Duration;
 
 const BAUD_RATE: u32 = 115_200;
 
@@ -36,7 +39,11 @@ impl RadioPacket {
                 .read_timeout(Some(Duration::from_secs(25)))
                 .open(port_name)
                 .unwrap_or_else(|e| {
+                    #[cfg(unix)]
                     eprintln!("{}", e.description);
+                    #[cfg(windows)]
+                    println!("{}", e.description);
+
                     exit(0)
                 }),
             buffer: if is_890 {
@@ -158,39 +165,50 @@ pub struct DmrPacket {
 impl DmrPacket {
     pub fn new(port_name: &str) -> Self {
         Self {
-            // 10ms as per original updater code
+            // Original updater code states 10ms but
+            // 20ms was tested as the most we can do
             port: SerialPort::builder()
                 .baud_rate(BAUD_RATE)
-                .read_timeout(Some(Duration::from_millis(10)))
+                .read_timeout(Some(Duration::ZERO))
                 .open(port_name)
                 .unwrap_or_else(|e| {
+                    #[cfg(unix)]
                     eprintln!("{}", e.description);
+                    #[cfg(windows)]
+                    println!("{}", e.description);
+                    
                     exit(0)
                 }),
             buffer: [0u8; 4108]
         }
     }
 
-    pub fn init_dmr_flash(&mut self) -> Result<bool> {
+    pub fn init_dmr_flash(&mut self) {
         // Unlike radio firmware updates, the RT-4D has to be intercepted
         // while it is entering DMR flash mode
         self.buffer[0] = 1;
         self.buffer[1] = 224;
         self.buffer[2] = 252;
         self.buffer[3] = 1;
-        self.port.write_all(&self.buffer[..5])?;
 
-        let mut response = [0u8; 8];
-        self.port.read_exact(&mut response)?;
-        // Reduce false positives by checking the response
-        if response[2..8] == [5, 1, 224, 252, 1, 0] {
-            // Ready to flash
-            return Ok(true)
+        loop {
+            self.port.write_all(&self.buffer[..5]).unwrap_or_default();
+            sleep(Duration::from_millis(10));
+
+            let mut response = [0u8; 8];
+            match self.port.read(&mut response) {
+                Ok(bytes_read) => {
+                    if bytes_read - 8 == 0 && response[2..8] == [5, 1, 224, 252, 1, 0] {
+                        // Ready to flash
+                        break
+                    }
+                }
+                _ => continue
+            }
         }
-        Ok(false)
     }
 
-    pub fn erase_dmr_flash(&mut self, offset: usize) -> Result<bool> {
+    pub fn erase_dmr_flash(&mut self, offset: usize) {
         self.buffer[3] = 255;
         self.buffer[4] = 244;
         self.buffer[5] = 6;
@@ -200,13 +218,23 @@ impl DmrPacket {
         self.buffer[10] = ((offset >> 16) & 0xFF) as u8;
         self.buffer[11] = ((offset >> 24) & 0xFF) as u8;
 
-        match self.port.write_all(&self.buffer[..13]) {
-            Ok(()) => Ok(true),
-            _ => Ok(false)
+        loop {
+            self.port.write_all(&self.buffer[..13]).unwrap_or_default();
+            sleep(Duration::from_millis(10));
+
+            let mut response = [0u8; 16];
+            match self.port.read(&mut response) {
+                Ok(bytes_read) => {
+                    if bytes_read - 16 == 0 && response[2..8] == [255, 1, 224, 252, 244, 7] {
+                        break
+                    }
+                }
+                _ => continue
+            }
         }
     }
 
-    pub fn write_dmr_flash(&mut self, offset: usize, fw_data: &[u8]) -> Result<bool> {
+    pub fn write_dmr_flash(&mut self, offset: usize, fw_data: &[u8]) {
         self.buffer[5] = 5;
         self.buffer[6] = 16;
         self.buffer[7] = 7;
@@ -216,35 +244,31 @@ impl DmrPacket {
         self.buffer[11] = 0;
         self.buffer[12..].copy_from_slice(fw_data);
 
-        match self.port.write_all(&self.buffer) {
-            Ok(()) => Ok(true),
-            _ => Ok(false)
-        }
-    }
+        loop {
+            self.port.write_all(&self.buffer).unwrap_or_default();
+            sleep(Duration::from_millis(10));
 
-    pub fn deinit_dmr_flash(&mut self) -> Result<bool> {
-        // Required so we can query for a checksum
-        self.buffer[3] = 9;
-        self.buffer[4] = 16;
-        self.buffer[5] = 0;
-        self.buffer[7] = 1;
-        self.buffer[9] = 255;
-        self.buffer[10] = 95;
-        self.buffer[11] = 24;
-        self.buffer[12] = 0;
-
-        match self.port.write_all(&self.buffer[..13]) {
-            Ok(()) => Ok(true),
-            _ => Ok(false)
+            let mut response = [0u8; 16];
+            match self.port.read(&mut response) {
+                Ok(bytes_read) => {
+                    if bytes_read - 15 == 0 && response[2..8] == [255, 1, 224, 252, 244, 6] {
+                        break
+                    }
+                }
+                _ => continue
+            }
         }
     }
 
     pub fn get_dmr_crc(&mut self) -> u32 {
         let mut response = [0u8; 11];
         loop {
-            match self.port.read_exact(&mut response) {
-                Ok(()) => {
-                    if response[..4] != [4, 14, 8, 1] {
+            match self.port.read(&mut response) {
+                Ok(bytes_read) => {
+                    if bytes_read == 0 {
+                        return !0
+                    }
+                    if bytes_read - 11 != 0 {
                         // Not a checksum packet
                         continue
                     }
@@ -253,10 +277,10 @@ impl DmrPacket {
                     let sum3 = response[9] as u32;
                     let sum4 = response[10] as u32;
                     let composite = sum1 | sum2 << 8 | sum3 << 16 | sum4 << 24;
-        
+
                     return composite
                 }
-                _ => continue // Keep going until we get a valid response
+                _ => continue
             }
         }
     }

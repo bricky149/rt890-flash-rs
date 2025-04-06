@@ -20,7 +20,7 @@ use self::serialport5::*;
 
 use crate::helper;
 use crate::uart::{DmrPacket, RadioPacket};
-use std::io::Write;
+use std::io::{stdout, Write};
 
 pub const FW_890_SIZE: usize = 60_416;
 const SPI_890_OFFSETS: [SpiRange; 9] = [
@@ -206,7 +206,11 @@ pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Res
             Ok(f) => f,
             Err(e) => {
                 // Print here as we cannot propagate up without casting
+                #[cfg(unix)]
                 eprintln!("{}", e);
+                #[cfg(windows)]
+                println!("{}", e);
+                
                 return Ok(false)
             }
         }
@@ -243,32 +247,27 @@ pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
 
     // Wait for the radio to connect so we can intercept it
     // We cannot flash DMR firmware without doing this first
+    print!("Waiting for radio...");
+    stdout().flush()?;
     let mut request = DmrPacket::new(port_name);
-    loop {
-        match request.init_dmr_flash() {
-            Ok(true) => break,
-            _ => print!("\rWaiting for radio...")
-        }
-    }
+    request.init_dmr_flash();
 
     for erase_offset in DMR_FW_4D_OFFSETS {
-        match request.erase_dmr_flash(erase_offset) {
-            Ok(true) => print!("\rErasing DMR firmware flash"),
-            _ => return Ok(false)
-        }
+        request.erase_dmr_flash(erase_offset);
+        print!("\rErasing DMR flash")
     }
 
     let mut file_offset = 0;
     for block in 0..373 {
         let page_offset = 272 + block * 16;
         let fw_data = &fw[file_offset..file_offset+4096];
-        match request.write_dmr_flash(page_offset, fw_data) {
-            Ok(true) => print!("\rFlashing DMR firmware ({}/373)", block),
-            _ => return Ok(false)
-        }
+
+        request.write_dmr_flash(page_offset, fw_data);
+        print!("\rFlashing DMR firmware ({}/373)", block);
+        stdout().flush()?;
+
         file_offset += 4096
     }
-    request.deinit_dmr_flash()?;
 
     let crc = request.get_dmr_crc();
     if crc - fw_crc != 0 {
