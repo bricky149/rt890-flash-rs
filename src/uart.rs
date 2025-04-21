@@ -73,7 +73,7 @@ impl RadioPacket {
         for &byte in &self.buffer[..sum_index] {
             sum = sum.wrapping_add(byte)
         }
-        self.buffer[sum_index] & sum == 0
+        self.buffer[sum_index] - sum == 0
     }
 
     pub fn erase_mcu_flash(&mut self, is_890: bool) -> Result<bool> {

@@ -127,16 +127,14 @@ pub fn dump_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<
         Some(f) => f,
         _ => return Ok(false)
     };
-
-    let mut request = RadioPacket::new(port_name, is_890);
-    request.set_command(RadioCommand::ReadSpiFlash as u8);
-
     let max_offset = if is_890 {
         32768 // * 128 = SPI_FLASH_SIZE
     } else {
         4096  // * 1024 = SPI_FLASH_SIZE
     };
 
+    let mut request = RadioPacket::new(port_name, is_890);
+    request.set_command(RadioCommand::ReadSpiFlash as u8);
     for offset in 0..max_offset {
         match request.read_spi_flash(offset) {
             Ok(Some(data)) => {
@@ -152,11 +150,10 @@ pub fn dump_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<
 }
 
 pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Result<bool> {
-    let spi = match helper::read_file_checked(file_path, SPI_FLASH_SIZE) {
-        Some(f) => f,
+    let spi = match helper::read_file(file_path, SPI_FLASH_SIZE) {
+        Ok(f) => f,
         _ => return Ok(false)
     };
-
     let chunk_size = if is_890 {
         128
     } else {
@@ -167,8 +164,8 @@ pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Resu
     } else {
         SPI_4D_OFFSETS.to_vec()
     };
-    let mut request = RadioPacket::new(port_name, is_890);
 
+    let mut request = RadioPacket::new(port_name, is_890);
     for spi_range in spi_offsets {
         request.set_command(spi_range.cmd);
         let mut offset = spi_range.offset;
@@ -189,31 +186,19 @@ pub fn restore_spi_flash(port_name: &str, file_path: &str, is_890: bool) -> Resu
 }
 
 pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Result<bool> {
-    let chunk_length;
-    let firmware_size;
-
-    let fw = if is_890 {
-        chunk_length = 128;
-        firmware_size = FW_890_SIZE;
-        match helper::read_file_checked(file_path, firmware_size) {
-            Some(f) => f,
-            _ => return Ok(false)
-        }
+    let firmware_size = if is_890 {
+        FW_890_SIZE
     } else {
-        chunk_length = 1024;
-        firmware_size = FW_4D_FLASH_SIZE;
-        match helper::read_file_padded(file_path, firmware_size) {
-            Ok(f) => f,
-            Err(e) => {
-                // Print here as we cannot propagate up without casting
-                #[cfg(unix)]
-                eprintln!("{}", e);
-                #[cfg(windows)]
-                println!("{}", e);
-                
-                return Ok(false)
-            }
-        }
+        FW_4D_FLASH_SIZE
+    };
+    let fw = match helper::read_file(file_path, firmware_size) {
+        Ok(f) => f,
+        _ => return Ok(false)
+    };
+    let chunk_length = if is_890 {
+        128
+    } else {
+        1024
     };
 
     let mut request = RadioPacket::new(port_name, is_890);
@@ -238,8 +223,8 @@ pub fn flash_mcu_firmware(port_name: &str, file_path: &str, is_890: bool) -> Res
 }
 
 pub fn flash_dmr_firmware(port_name: &str, file_path: &str) -> Result<bool> {
-    let fw = match helper::read_file_checked(file_path, DMR_FW_4D_SIZE) {
-        Some(f) => f,
+    let fw = match helper::read_file(file_path, DMR_FW_4D_SIZE) {
+        Ok(f) => f,
         _ => return Ok(false)
     };
     let fw_crc = helper::calculate_crc(&fw[..]);

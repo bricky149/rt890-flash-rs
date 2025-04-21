@@ -17,7 +17,7 @@
 
 use crate::radio::DMR_FW_4D_SIZE;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Error, Read, Result};
 
 // Derived from 0xEDB88320, see init_crc
 const CRC32C_TABLE: [u32; 256] = [
@@ -85,16 +85,21 @@ pub fn create_padded_array(size: usize) -> Vec<u8> {
     (0..size).map(|_| 0).collect()
 }
 
-pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
+pub fn read_file(path: &str, max_size: usize) -> Result<Vec<u8>> {
     // RT-890 expects firmware files to be an exact size
     // RT-4D expects DMR firmware files to be an exact size
-    match fs::read(path) {
-        Ok(f) => {
-            if expected_size != 0 && f.len() != expected_size {
-                println!("Specified file is not exactly {} bytes", expected_size);
-                return None
+    // RT-4D radio firmware files can be of any size up to FW_4D_FLASH_SIZE
+    // Padding it allows for the radio to reboot itself after flashing
+    match fs::metadata(path) {
+        Ok(fm) => {
+            if fm.len() == 0 || fm.len() > (max_size as u64) {
+                return Err(Error::new(io::ErrorKind::InvalidData, "File too large or empty"))
             }
-            Some(f)
+            let mut buffer = create_padded_array(max_size);
+            let mut file = File::open(path)?;
+            let _bytes_read = file.read(&mut buffer[..])?;
+
+            Ok(buffer)
         }
         Err(e) => {
             #[cfg(unix)]
@@ -102,19 +107,9 @@ pub fn read_file_checked(path: &str, expected_size: usize) -> Option<Vec<u8>> {
             #[cfg(windows)]
             println!("{}", e);
 
-            None
+            Err(e)
         }
     }
-}
-
-pub fn read_file_padded(path: &str, size: usize) -> io::Result<Vec<u8>> {
-    // RT-4D radio firmware files can be of any size up to FW_4D_FLASH_SIZE
-    // Padding it allows for the radio to reboot itself after flashing
-    let mut buffer = create_padded_array(size);
-    let mut file = File::open(path)?;
-    let _bytes_read = file.read(&mut buffer[..])?;
-
-    Ok(buffer)
 }
 
 pub fn create_file(path: &str) -> Option<File> {
@@ -125,7 +120,7 @@ pub fn create_file(path: &str) -> Option<File> {
             eprintln!("{}", e);
             #[cfg(windows)]
             println!("{}", e);
-            
+
             None
         }
     }
