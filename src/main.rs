@@ -15,9 +15,6 @@
     limitations under the License.
 */
 
-extern crate nix;
-use nix::unistd::Uid;
-
 extern crate serialport5;
 use self::serialport5::*;
 
@@ -196,11 +193,6 @@ fn main() {
         5..=6 => { // Executable name with four or five arguments
             if args[1] != "-p" {
                 println!("{}", USAGE);
-                return
-            }
-
-            if !Uid::effective().is_root() {
-                println!("You must run this executable with root permissions");
                 return
             }
 
